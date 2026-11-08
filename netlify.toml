@@ -1,0 +1,13 @@
+# Deploy as its own Netlify site: set "Base directory" to huntmap (no build command needed).
+[build]
+  publish = "."
+
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "no-cache"
+
+[[headers]]
+  for = "/*.webmanifest"
+  [headers.values]
+    Content-Type = "application/manifest+json"

@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#1A2410" />
+<meta name="description" content="Freeport hunting map: legal zones, LiDAR terrain, hardwoods, waypoints and live GPS." />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Hunt Map" />
+<title>Freeport Hunt Map</title>
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="icon" href="icons/icon-192.png" />
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css" />
+<link rel="stylesheet" href="app.css" />
+</head>
+<body>
+<div id="map"></div>
+
+<div class="top">
+  <button class="chip wind" id="windChip" style="display:none" aria-label="Wind forecast"></button>
+  <div class="spacer"></div>
+  <button class="iconbtn" id="btnLayers" aria-label="Map layers">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3 2 8l10 5 10-5-10-5Z"/><path d="m2 13 10 5 10-5"/></svg>
+  </button>
+  <button class="iconbtn" id="btnList" aria-label="Waypoints and tracks">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21Z"/><circle cx="12" cy="9.5" r="2.5"/></svg>
+  </button>
+  <button class="iconbtn" id="btnOffline" aria-label="Offline maps">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0-4-4m4 4 4-4"/><path d="M4 17v3h16v-3"/></svg>
+  </button>
+  <button class="iconbtn" id="btnInfo" aria-label="Legend and info">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></svg>
+  </button>
+</div>
+<div class="banner" id="offlineBanner" style="display:none">No signal: showing downloaded maps only</div>
+
+<div class="fab" id="fab">
+  <button class="iconbtn big" id="btnAdd" aria-label="Add waypoint at my location">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14"/></svg>
+  </button>
+  <button class="iconbtn big" id="btnRec" aria-label="Record track">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="6" fill="currentColor"/></svg>
+  </button>
+  <button class="iconbtn big" id="btnLocate" aria-label="Show my location and follow">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+  </button>
+</div>
+
+<div class="card s-idle" id="card">
+  <div class="head" id="cardHead"><span class="dot" id="cardDot"></span><span id="cardTitle" class="grow">Loading…</span><span id="cardBadge" class="badge"></span><span class="chev">▾</span></div>
+  <div id="cardAlerts"></div>
+  <div class="body" id="cardBody"></div>
+</div>
+
+<div class="scrim" id="scrim"></div>
+
+<!-- Layers -->
+<div class="sheet" id="sheetLayers" role="dialog" aria-label="Map layers">
+  <div class="sheet-head"><h2>Map layers</h2><button class="btn" data-close>Done</button></div>
+  <div id="layerBody"></div>
+</div>
+
+<!-- Waypoints & tracks -->
+<div class="sheet" id="sheetList" role="dialog" aria-label="Waypoints and tracks">
+  <div class="sheet-head"><h2>My spots</h2><button class="btn" data-close>Done</button></div>
+  <div class="tabs"><button id="tabWp" class="sel">Waypoints</button><button id="tabTrk">Tracks</button></div>
+  <div id="listBody"></div>
+  <div class="btnrow">
+    <button class="btn" id="btnImport">Import GPX/KML</button>
+    <button class="btn" id="btnExport">Export GPX</button>
+  </div>
+  <p class="muted small">Your waypoints, photos and tracks are stored on this phone only. Export a GPX now and then as a backup. onX, Garmin and Gaia can all import and export GPX/KML.</p>
+  <input type="file" id="importInput" accept=".gpx,.kml,application/gpx+xml,application/vnd.google-earth.kml+xml,text/xml" hidden />
+</div>
+
+<!-- Waypoint editor (non-modal so the marker can be dragged) -->
+<div class="sheet short" id="sheetWp" role="dialog" aria-label="Waypoint">
+  <div class="sheet-head"><h2>Waypoint</h2><button class="btn" data-close>Cancel</button></div>
+  <div class="coords"><span id="wpZone"></span><span id="wpCoords"></span></div>
+  <p class="muted small">Drag the marker on the map to move it.</p>
+  <div class="types" id="wpTypes"></div>
+  <label class="field">Name<input id="wpName" maxlength="60" autocomplete="off" /></label>
+  <label class="field">Notes<textarea id="wpNotes" rows="3" placeholder="Wind direction, sign, access route, sit times…"></textarea></label>
+  <div class="photos"><div id="wpPhotos"></div>
+    <label class="btn small addphoto">📷 Add photo<input type="file" id="wpPhotoInput" accept="image/*" multiple hidden /></label></div>
+  <div class="btnrow">
+    <button class="btn primary" id="wpSave">Save</button>
+    <button class="btn" id="wpNav">Navigate</button>
+    <button class="btn danger" id="wpDelete">Delete</button>
+  </div>
+  <p class="muted small" id="wpCreated"></p>
+</div>
+
+<!-- Offline -->
+<div class="sheet" id="sheetOffline" role="dialog" aria-label="Offline maps">
+  <div class="sheet-head"><h2>Offline maps</h2><button class="btn" data-close>Done</button></div>
+  <div class="pack" id="pack">
+    <div class="pack-head"><span class="pack-ico">🦌</span><div><b>All Freeport preserves</b><small>Every preserve on the FCT hunting map plus ~300 yd around it, every layer, in one tap. Do it at home on Wi-Fi.</small></div></div>
+    <div class="seg" id="packLevel">
+      <button data-level="high" class="sel">High detail<small>Recommended</small></button>
+      <button data-level="max">Maximum<small>Sharpest, about 2× the size</small></button>
+    </div>
+    <div id="packLayers" class="grid2"></div>
+    <p class="muted small" id="packEstimate">Calculating…</p>
+    <div class="progress" id="packProg" style="display:none"><div id="packBar"></div><span id="packProgTxt"></span></div>
+    <div class="btnrow"><button class="btn primary" id="packStart">Download all preserves</button><button class="btn" id="packCancel" style="display:none">Pause</button></div>
+    <p class="small" id="packStatus"></p>
+  </div>
+  <h3>Or download the area on screen</h3>
+  <p class="muted">For spots outside the preserves. Pan and zoom to the area first.</p>
+  <p><b id="offArea"></b></p>
+  <label class="field">Name<input id="offName" placeholder="e.g. Simpson Woods" /></label>
+  <label class="field">Detail
+    <select id="offZoom">
+      <option value="15">Overview (zoom 15)</option>
+      <option value="16">Good (zoom 16)</option>
+      <option value="17" selected>Detailed (zoom 17)</option>
+      <option value="18">Max (zoom 18, small areas only)</option>
+    </select></label>
+  <h3>Layers to save</h3>
+  <div id="offLayers" class="grid2"></div>
+  <p class="muted" id="offEstimate"></p>
+  <div class="progress" id="offProg" style="display:none"><div id="offBar"></div><span id="offProgTxt"></span></div>
+  <div class="btnrow"><button class="btn primary" id="offStart">Download this area</button><button class="btn" id="offCancel" style="display:none">Cancel</button></div>
+  <h3>Saved areas</h3>
+  <div id="offAreas"></div>
+  <p class="muted small" id="offStorage"></p>
+  <button class="btn danger" id="offClear">Clear all offline maps</button>
+</div>
+
+<!-- Wind -->
+<div class="sheet" id="sheetWind" role="dialog" aria-label="Wind">
+  <div class="sheet-head"><h2>Wind &amp; weather</h2><button class="btn" data-close>Done</button></div>
+  <div id="windBody"><p class="muted">Loading…</p></div>
+  <p class="muted small">Forecast: Open-Meteo.</p>
+</div>
+
+<!-- Info -->
+<div class="sheet" id="sheetInfo" role="dialog" aria-label="Info">
+  <div class="sheet-head"><h2>Freeport Hunt Map</h2><button class="btn" data-close>Done</button></div>
+  <div id="installBox" class="install" style="display:none">
+    <b>Install as an app</b>
+    <p id="iosInstall" style="display:none">On iPhone: tap the <b>Share</b> button in Safari, then <b>Add to Home Screen</b>.</p>
+    <button class="btn primary" id="btnInstall">Install app</button>
+  </div>
+  <h3>How to use</h3>
+  <ul>
+    <li><b>◎</b> follows your GPS location. The bottom card shows whether you're in a legal zone, the distance to the boundary, and shooting hours.</li>
+    <li><b>Tap</b> the map to check any spot. <b>Long-press</b> or tap <b>＋</b> to drop a waypoint (stand, blind, camera, scrape…) with notes and photos.</li>
+    <li><b>●</b> records your track. <b>Layers</b> has presets: <i>Terrain scout</i> shows slope, LiDAR hillshade, contours and creeks. <i>Food / hardwoods</i> shows leaf-off aerial photos plus hardwood forest.</li>
+    <li>Scouting tip: steep ground (orange/red slope) dropping to a creek, a bench on a hillside, or a saddle between ridges, next to hardwood (gray in leaf-off photos) that holds oaks.</li>
+  </ul>
+  <h3>Legend</h3>
+  <div class="legend">
+    <div><i style="background:#5BC236"></i>Firearm &amp; bow hunting allowed</div>
+    <div><i style="background:#5C8FE6"></i>Bow hunting only</div>
+    <div><i style="background:#E8642C"></i>No hunting</div>
+    <div><i class="dash"></i>Other FCT land: not on the hunting map, so ask FCT</div>
+    <div><i class="dash circ"></i>About 100 yd around an address point. No firearm discharge near a dwelling without the owner's permission</div>
+  </div>
+  <h3>Before you hunt</h3>
+  <ul>
+    <li><b>This app is a guide, not legal advice.</b> Boundaries come from state GIS data and may be off by tens of feet, and phone GPS can be off by 15–50+ feet. Posted signs and blazes on the ground take priority.</li>
+    <li>Zone status comes from the Freeport Conservation Trust map <i>Hunting on Freeport Conservation Trust Preserves</i>. Confirm current rules with FCT (207-865-3985). Rules can change during a season.</li>
+    <li>Maine: no Sunday hunting. Legal shooting time is 30 min before sunrise to 30 min after sunset (the times shown are calculated). Follow license, tag and orange-clothing rules from Maine IF&amp;W.</li>
+    <li>The 100-yard circles use E911 address points, which can be off from the actual building, and some buildings have no address. Use your eyes.</li>
+    <li>The forest layers are satellite/model estimates (30 m and 250 m), so use them to decide where to look. Confirm oaks on foot.</li>
+  </ul>
+  <h3>Data</h3>
+  <p class="muted small">Boundaries: Maine Conserved Lands. LiDAR elevation and leaf-off orthoimagery: Maine GeoLibrary. Address points: Maine E911. Hydrography and topo: USGS. Land cover: MRLC NLCD 2021. Forest groups: USDA Forest Service FIA. Imagery: Esri. Weather: Open-Meteo. Hunting status: Freeport Conservation Trust. Zone data built <span id="built"></span>.</p>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="vendor/leaflet/leaflet.js"></script>
+<script src="data.js"></script>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
