@@ -18,7 +18,7 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/configure-pages@v5
         with:
           enablement: true
@@ -27,7 +27,7 @@ jobs:
           mkdir _site
           cp -r index.html app.css data.js sw.js manifest.webmanifest js icons vendor _site/
           touch _site/.nojekyll
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v4
         with:
           path: _site
       - id: deployment
