@@ -32,8 +32,11 @@ Waypoints, photos and tracks are stored on the device (IndexedDB). Export a GPX 
 
 ## Deploy
 
-Any static host with HTTPS works (GPS requires HTTPS). On Netlify, create a new site from this repo
-with **Base directory** `huntmap` and no build command. `netlify.toml` sets the headers.
+**Live app:** https://aglegassey-dev.github.io/Hunt-Map/
+
+Every push to `main` is published to GitHub Pages by `.github/workflows/pages.yml` (free, HTTPS,
+no server). Installed copies update the next time they're opened with signal. Remember to bump
+`VERSION` in `sw.js` when app files change. Any other static HTTPS host also works (`netlify.toml` included).
 
 Local test: `python3 -m http.server 8000` in this folder, then open http://localhost:8000.
 
