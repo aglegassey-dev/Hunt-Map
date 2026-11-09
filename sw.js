@@ -1,6 +1,6 @@
 // Freeport Hunt Map service worker: offline app shell + cache-first map tiles.
 // Bump VERSION when shell files change so phones pick up the update.
-const VERSION = 'v4';
+const VERSION = 'v5';
 const SHELL_CACHE = `hunt-shell-${VERSION}`;
 const TILE_CACHE = 'hunt-tiles'; // must match TILE_CACHE in js/offline.js
 const DATA_CACHE = 'hunt-data';
@@ -17,7 +17,8 @@ const SHELL = [
 const TILE_HOSTS = ['server.arcgisonline.com', 'basemap.nationalmap.gov', 'fwspublicservices.wim.usgs.gov'];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(SHELL_CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // cache: 'reload' bypasses the browser/CDN HTTP cache so a new version never mixes in stale files
+  e.waitUntil(caches.open(SHELL_CACHE).then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {
@@ -51,14 +52,16 @@ async function networkFirst(req, cacheName, timeoutMs) {
   }
 }
 
-// Serve shell from cache instantly; refresh it in the background (stale-while-revalidate).
+// App files come from this version's cache (installed together, so they always match).
+// Updates arrive as a new service worker version, which the page detects and reloads into.
 async function shell(req) {
   const cache = await caches.open(SHELL_CACHE);
   const key = req.mode === 'navigate' ? './index.html' : req;
-  const hit = await cache.match(key, { ignoreSearch: req.mode === 'navigate' });
-  const update = fetch(req).then((res) => { if (res.ok) cache.put(key, res.clone()); return res; }).catch(() => null);
-  return hit || (await update) || new Response('Offline', { status: 503 });
+  const hit = await cache.match(key, { ignoreSearch: true });
+  if (hit) return hit;
+  try { return await fetch(req); } catch { return new Response('Offline', { status: 503 }); }
 }
+self.addEventListener('message', (e) => { if (e.data === 'version') e.source?.postMessage({ version: VERSION }); });
 
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;

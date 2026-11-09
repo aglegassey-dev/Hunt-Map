@@ -242,3 +242,28 @@ input, textarea, select { font: inherit; color: var(--text); background: var(--b
 .blind-pin { background: none; border: 0; }
 .blind-pin div { width: 30px; height: 30px; border-radius: 50%; background: var(--accent); color: #1A1406; font-weight: 800; display: grid; place-items: center; border: 2px solid #fff; box-shadow: 0 2px 8px rgba(0,0,0,.5); font-size: 15px; }
 .wind-arrow-map { background: none; border: 0; pointer-events: none; }
+
+/* ---------- bottom tab bar (v5) ---------- */
+:root { --tab-h: 62px; }
+.tabbar { position: fixed; z-index: 1150; left: 0; right: 0; bottom: 0; height: calc(var(--tab-h) + var(--sb)); padding-bottom: var(--sb);
+  background: rgba(22,31,14,.98); border-top: 1px solid rgba(255,255,255,.08); display: flex; box-shadow: 0 -4px 16px rgba(0,0,0,.35); }
+.tabbar button { flex: 1; border: 0; background: none; color: var(--muted); font-size: 11.5px; font-weight: 600; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 3px; padding: 6px 0 4px; min-width: 0; }
+.tabbar button svg { width: 24px; height: 24px; }
+.tabbar button.active { color: var(--accent); }
+.tabbar .hero .ico { width: 44px; height: 44px; margin-top: -20px; border-radius: 50%; background: var(--accent); display: grid; place-items: center; font-size: 22px;
+  box-shadow: 0 3px 12px rgba(0,0,0,.45); border: 3px solid rgba(22,31,14,.98); }
+.tabbar .hero { color: var(--accent); }
+.card { bottom: calc(var(--tab-h) + var(--sb) + 10px); max-height: calc(52vh - var(--tab-h)); }
+.sheet { bottom: calc(var(--tab-h) + var(--sb)); padding-bottom: 16px; z-index: 1100; max-height: calc(86vh - var(--tab-h)); }
+.sheet.short { max-height: calc(62vh - var(--tab-h)); }
+.scrim { z-index: 1050; }
+.leaflet-bottom { bottom: calc(var(--tab-h) + var(--sb)); }
+.morelist .li { width: 100%; background: var(--panel-2); border: 0; border-radius: 12px; margin-bottom: 8px; padding: 12px; text-align: left; color: var(--text); font-size: 18px; }
+.morelist .li b { font-size: 15px; }
+.new-item { display: flex; gap: 12px; padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,.06); }
+.new-item > span { font-size: 26px; width: 34px; text-align: center; flex: none; }
+.new-item b { color: var(--text); font-size: 15px; }
+.new-item p { margin: 2px 0 0; }
+.update-bar { position: fixed; z-index: 1300; left: 10px; right: 10px; top: calc(var(--st) + 62px); background: var(--accent); color: #1A1406; border-radius: 12px;
+  padding: 10px 14px; font-weight: 700; display: flex; align-items: center; gap: 10px; box-shadow: 0 4px 16px rgba(0,0,0,.4); }

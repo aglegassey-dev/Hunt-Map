@@ -20,23 +20,8 @@
 <div id="map"></div>
 
 <div class="top">
-  <button class="chip wind" id="windChip" style="display:none" aria-label="Morning hunt plan and wind"></button>
+  <button class="chip wind" id="windChip" style="display:none" aria-label="Wind: open the morning hunt plan"></button>
   <div class="spacer"></div>
-  <button class="iconbtn" id="btnLayers" aria-label="Map layers">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3 2 8l10 5 10-5-10-5Z"/><path d="m2 13 10 5 10-5"/></svg>
-  </button>
-  <button class="iconbtn" id="btnList" aria-label="Waypoints and tracks">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21Z"/><circle cx="12" cy="9.5" r="2.5"/></svg>
-  </button>
-  <button class="iconbtn" id="btnOffline" aria-label="Offline maps">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0-4-4m4 4 4-4"/><path d="M4 17v3h16v-3"/></svg>
-  </button>
-  <button class="iconbtn" id="btnShareApp" aria-label="Share with hunting buddies">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="19" r="2.5"/><path d="m8.2 10.9 7.6-4.6M8.2 13.1l7.6 4.6"/></svg>
-  </button>
-  <button class="iconbtn" id="btnInfo" aria-label="Legend and info">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></svg>
-  </button>
 </div>
 <div class="banner" id="offlineBanner" style="display:none">No signal: showing downloaded maps only</div>
 
@@ -57,6 +42,14 @@
   <div id="cardAlerts"></div>
   <div class="body" id="cardBody"></div>
 </div>
+
+<nav class="tabbar" aria-label="Main">
+  <button id="btnLayers"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3 2 8l10 5 10-5-10-5Z"/><path d="m2 13 10 5 10-5"/></svg>Layers</button>
+  <button id="btnPlan" class="hero"><span class="ico">🎯</span>Hunt plan</button>
+  <button id="btnList"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21Z"/><circle cx="12" cy="9.5" r="2.5"/></svg>My spots</button>
+  <button id="btnOffline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0-4-4m4 4 4-4"/><path d="M4 17v3h16v-3"/></svg>Offline</button>
+  <button id="btnInfo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h16M4 17h16"/></svg>More</button>
+</nav>
 
 <div class="scrim" id="scrim"></div>
 
@@ -145,8 +138,9 @@
   <div class="sheet-head"><h2>Morning hunt plan</h2><button class="btn" data-close>Done</button></div>
   <div class="chips days" id="planDays"></div>
   <div id="planWind"><p class="muted">Loading forecast…</p></div>
+  <button class="btn primary big" id="planGo">🎯 Find my best blind spots</button>
   <details class="override" id="planOverride">
-    <summary>Plan for a different wind</summary>
+    <summary>Plan for a different wind (or no signal)</summary>
     <div class="compass" id="planCompass"></div>
     <div class="seg small" id="planSpeed">
       <button data-mph="3">Calm<small>0–4 mph</small></button>
@@ -154,7 +148,6 @@
       <button data-mph="12">Breezy<small>10+ mph</small></button>
     </div>
   </details>
-  <button class="btn primary big" id="planGo">🎯 Find my best blind spots</button>
   <div class="progress" id="planProg" style="display:none"><div id="planBar"></div><span id="planProgTxt"></span></div>
   <div id="planResults"></div>
   <p class="muted small">Spots are scored inside legal firearm/bow preserves, at least ~40 yd from boundaries and outside the 100-yd house zones. Scoring favors a morning ground blind on flat ground near deer travel (benches, draws, ridges) between food (oaks, fields) and bedding (swamps, thick conifer, benches), with the wind and early-morning thermals carrying your scent away from them. It's a model, so walk it first. Forecast: Open-Meteo.</p>
@@ -192,7 +185,12 @@
 
 <!-- Info -->
 <div class="sheet" id="sheetInfo" role="dialog" aria-label="Info">
-  <div class="sheet-head"><h2>Freeport Hunt Map</h2><button class="btn" data-close>Done</button></div>
+  <div class="sheet-head"><h2>More</h2><button class="btn" data-close>Done</button></div>
+  <div class="morelist">
+    <button class="li" id="btnShareApp"><span class="ico">📤</span><span class="grow"><b>Share with hunting buddies</b><small>QR code and link to this app</small></span>›</button>
+    <button class="li" id="btnWhatsNew"><span class="ico">✨</span><span class="grow"><b>What's new</b><small id="appVersion"></small></span>›</button>
+    <button class="li" id="btnUpdate"><span class="ico">🔄</span><span class="grow"><b>Check for updates</b><small>Reloads with the latest version</small></span>›</button>
+  </div>
   <div id="installBox" class="install" style="display:none">
     <b>Install as an app</b>
     <p id="iosInstall" style="display:none">On iPhone: tap the <b>Share</b> button in Safari, then <b>Add to Home Screen</b>.</p>
@@ -226,6 +224,17 @@
   </ul>
   <h3>Data</h3>
   <p class="muted small">Boundaries: Maine Conserved Lands. LiDAR elevation and leaf-off orthoimagery: Maine GeoLibrary. Address points: Maine E911. Hydrography and topo: USGS. Forest types: LANDFIRE 2024 EVT (USGS/USFS). Wetlands: USFWS National Wetlands Inventory. Imagery: Esri. Weather: Open-Meteo. Hunting status: Freeport Conservation Trust. Zone data built <span id="built"></span>.</p>
+</div>
+
+<!-- What's new -->
+<div class="sheet" id="sheetNew" role="dialog" aria-label="What's new">
+  <div class="sheet-head"><h2>What's new</h2><button class="btn" data-close>Got it</button></div>
+  <div class="new-item"><span>🎯</span><div><b>Hunt plan</b> (bottom bar)<p>Pick your hunt day to see the sunrise wind, then tap <b>Find my best blind spots</b>. You get the top 5 places to set a blind, which way to face and where to walk in from.</p></div></div>
+  <div class="new-item"><span>⛰️</span><div><b>Sharper terrain</b><p>Contours, slope, and benches/ridges/draws are drawn from 1 m LiDAR. Try <b>Layers → Terrain scout</b>.</p></div></div>
+  <div class="new-item"><span>🌰</span><div><b>Forest types</b><p>Oak, pine-oak, hardwoods, swamps and fields. Try <b>Layers → Food &amp; cover</b>. Tap any spot to see its forest type.</p></div></div>
+  <div class="new-item"><span>📤</span><div><b>Share with buddies</b><p><b>More → Share</b> for a QR code. Any waypoint can be texted as a link.</p></div></div>
+  <div class="new-item"><span>⬇</span><div><b>Re-download your offline maps</b><p>The terrain layers changed. On Wi-Fi: <b>Offline → Download all preserves</b>.</p></div></div>
+  <button class="btn primary big" id="newTryPlan">🎯 Try the Hunt plan</button>
 </div>
 
 <div class="toast" id="toast"></div>

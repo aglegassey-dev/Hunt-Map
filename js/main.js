@@ -128,14 +128,19 @@ const openSheet = (id, modal = true) => {
 };
 const closeSheets = () => {
   document.querySelectorAll('.sheet').forEach((s) => s.classList.remove('open')); $('scrim').classList.remove('open');
+  if (typeof setTab === 'function') setTab(null);
   if (editing) closeEditor(false);
 };
 $('scrim').onclick = closeSheets;
 document.addEventListener('click', (e) => { if (e.target.closest('[data-close]')) closeSheets(); });
-$('btnLayers').onclick = () => { openSheet('sheetLayers'); renderLayerSheet(); };
-$('btnList').onclick = () => { renderList(); openSheet('sheetList'); };
-$('btnOffline').onclick = () => { renderOffline(); openSheet('sheetOffline'); };
-$('btnInfo').onclick = () => openSheet('sheetInfo');
+// bottom tab bar: tapping the active tab again closes its sheet
+let activeTab = null;
+function setTab(id) { activeTab = id; document.querySelectorAll('.tabbar button').forEach((b) => b.classList.toggle('active', b.id === id)); }
+const tab = (id, open) => () => { if (activeTab === id && document.querySelector('.sheet.open')) { closeSheets(); return; } open(); setTab(id); };
+$('btnLayers').onclick = tab('btnLayers', () => { openSheet('sheetLayers'); renderLayerSheet(); });
+$('btnList').onclick = tab('btnList', () => { renderList(); openSheet('sheetList'); });
+$('btnOffline').onclick = tab('btnOffline', () => { renderOffline(); openSheet('sheetOffline'); });
+$('btnInfo').onclick = tab('btnInfo', () => openSheet('sheetInfo'));
 $('built').textContent = D.built;
 
 function renderLayerSheet() {
@@ -271,7 +276,7 @@ function render(res, { title, extraHtml = '', lat, lon } = {}) {
   }
   placeFab();
 }
-function placeFab() { $('fab').style.bottom = ($('card').offsetHeight + 18) + 'px'; }
+function placeFab() { $('fab').style.bottom = `calc(${$('card').offsetHeight + 18}px + var(--tab-h) + var(--sb))`; }
 window.addEventListener('resize', placeFab);
 $('cardHead').onclick = () => { store.set('cardCollapsed', !store.get('cardCollapsed', false)); $('card').classList.toggle('collapsed'); placeFab(); };
 
@@ -728,7 +733,9 @@ async function refreshWind() {
     $('windChip').style.display = '';
   } catch { $('windChip').innerHTML = '🎯 <small>Plan</small>'; $('windChip').style.display = ''; }
 }
-$('windChip').onclick = () => { openSheet('sheetWind'); renderPlan(); };
+function openPlan() { openSheet('sheetWind'); renderPlan(); setTab('btnPlan'); }
+$('windChip').onclick = openPlan;
+$('btnPlan').onclick = tab('btnPlan', openPlan);
 refreshWind(); setInterval(refreshWind, 15 * 60000);
 
 const huntParcels = feats.filter((f) => f.properties.status === 'firearm' || f.properties.status === 'bow');
@@ -771,7 +778,8 @@ async function renderPlan() {
     </div>`;
   const clr = $('planClear'); if (clr) clr.onclick = (e) => { e.preventDefault(); planOverride = null; renderPlan(); };
   $('planGo').disabled = !planWindNow;
-  $('planGo').textContent = planWindNow ? `🎯 Find best blind spots for a ${cardinal(planWindNow.dir)} wind` : '🎯 Pick a wind below first';
+  $('planGo').textContent = planWindNow ? `🎯 Find best blind spots for a ${cardinal(planWindNow.dir)} wind` : '🎯 Choose the expected wind below first';
+  if (!sum) $('planOverride').open = true; // no forecast (no signal): show the wind picker right away
 }
 $('planDays').addEventListener('click', (e) => { const b = e.target.closest('[data-day]'); if (b) { planDay = +b.dataset.day; renderPlan(); } });
 $('planCompass').addEventListener('click', (e) => { const b = e.target.closest('[data-dir]'); if (b) { planOverride = { dir: +b.dataset.dir, mph: planOverride?.mph ?? 7 }; renderPlan(); } });
@@ -917,10 +925,37 @@ $('btnInstall').onclick = async () => {
 if (!isStandalone && /iphone|ipad|ipod/i.test(navigator.userAgent)) { $('iosInstall').style.display = ''; $('installBox').style.display = ''; $('btnInstall').style.display = 'none'; }
 const netBanner = () => $('offlineBanner').style.display = navigator.onLine ? 'none' : '';
 window.addEventListener('online', netBanner); window.addEventListener('offline', netBanner); netBanner();
+// ---- updates: check on launch and whenever the app comes back to the foreground; reload into new versions
+const APP_VERSION = 'v5';
+$('appVersion').textContent = `Version ${APP_VERSION.slice(1)} · data ${D.built}`;
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('./sw.js').catch(() => {});
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController || reloading) return; // first install: nothing to refresh
+    // guard against reload loops while a new version is still activating
+    let last = 0; try { last = +sessionStorage.getItem('huntmap.reloadAt') || 0; } catch { /* private mode */ }
+    if (Date.now() - last < 20000) return;
+    try { sessionStorage.setItem('huntmap.reloadAt', String(Date.now())); } catch { /* private mode */ }
+    reloading = true;
+    if (editing || recording || document.querySelector('#sheetOffline.open') || packAbort) {
+      const bar = document.createElement('div'); bar.className = 'update-bar';
+      bar.innerHTML = '✨ Update ready <span class="grow"></span><button class="btn small">Reload</button>';
+      bar.querySelector('button').onclick = () => location.reload(); document.body.appendChild(bar);
+    } else location.reload();
+  });
+  navigator.serviceWorker.register('./sw.js').then((reg) => {
+    const check = () => reg.update().catch(() => {});
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') check(); });
+    $('btnUpdate').onclick = async () => { toast('Checking for updates…'); await check(); setTimeout(() => { if (!reloading) toast('You have the latest version'); }, 2500); };
+  }).catch(() => {});
 }
-if (!store.get('seenInfo2', false)) { openSheet('sheetInfo'); store.set('seenInfo2', true); }
+$('btnWhatsNew').onclick = () => openSheet('sheetNew');
+$('newTryPlan').onclick = () => { closeSheets(); openPlan(); };
+if (store.get('seenVersion', '') !== APP_VERSION) {
+  store.set('seenVersion', APP_VERSION);
+  setTimeout(() => { if (!document.querySelector('.sheet.open')) openSheet('sheetNew'); }, 600);
+}
 
 // ===================================================================== go
 updLabels(); idleCard();
