@@ -20,7 +20,7 @@
 <div id="map"></div>
 
 <div class="top">
-  <button class="chip wind" id="windChip" style="display:none" aria-label="Wind forecast"></button>
+  <button class="chip wind" id="windChip" style="display:none" aria-label="Morning hunt plan and wind"></button>
   <div class="spacer"></div>
   <button class="iconbtn" id="btnLayers" aria-label="Map layers">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3 2 8l10 5 10-5-10-5Z"/><path d="m2 13 10 5 10-5"/></svg>
@@ -140,11 +140,24 @@
   <button class="btn danger" id="offClear">Clear all offline maps</button>
 </div>
 
-<!-- Wind -->
-<div class="sheet" id="sheetWind" role="dialog" aria-label="Wind">
-  <div class="sheet-head"><h2>Wind &amp; weather</h2><button class="btn" data-close>Done</button></div>
-  <div id="windBody"><p class="muted">Loading…</p></div>
-  <p class="muted small">Forecast: Open-Meteo.</p>
+<!-- Morning hunt plan (wind + blind spots) -->
+<div class="sheet" id="sheetWind" role="dialog" aria-label="Morning hunt plan">
+  <div class="sheet-head"><h2>Morning hunt plan</h2><button class="btn" data-close>Done</button></div>
+  <div class="chips days" id="planDays"></div>
+  <div id="planWind"><p class="muted">Loading forecast…</p></div>
+  <details class="override" id="planOverride">
+    <summary>Plan for a different wind</summary>
+    <div class="compass" id="planCompass"></div>
+    <div class="seg small" id="planSpeed">
+      <button data-mph="3">Calm<small>0–4 mph</small></button>
+      <button data-mph="7">Light<small>5–9 mph</small></button>
+      <button data-mph="12">Breezy<small>10+ mph</small></button>
+    </div>
+  </details>
+  <button class="btn primary big" id="planGo">🎯 Find my best blind spots</button>
+  <div class="progress" id="planProg" style="display:none"><div id="planBar"></div><span id="planProgTxt"></span></div>
+  <div id="planResults"></div>
+  <p class="muted small">Spots are scored inside legal firearm/bow preserves, at least ~40 yd from boundaries and outside the 100-yd house zones. Scoring favors a morning ground blind on flat ground near deer travel (benches, draws, ridges) between food (oaks, fields) and bedding (swamps, thick conifer, benches), with the wind and early-morning thermals carrying your scent away from them. It's a model, so walk it first. Forecast: Open-Meteo.</p>
 </div>
 
 <!-- Incoming shared waypoints -->
@@ -191,6 +204,7 @@
     <li><b>Tap</b> the map to check any spot. <b>Long-press</b> or tap <b>＋</b> to drop a waypoint (stand, blind, camera, scrape…) with notes and photos.</li>
     <li><b>●</b> records your track. <b>Layers</b> has one-tap presets: <i>Terrain scout</i> (LiDAR relief, contours, benches/ridges/draws), <i>Stand finder</i> (satellite, relief, slope, contours), <i>Food &amp; cover</i> (leaf-off photos, forest types, wetlands).</li>
     <li>Tapping a spot shows its elevation, slope, which way it faces, terrain feature and forest type, even offline.</li>
+    <li><b>Morning hunt plan</b> (tap the wind at top-left): pick your hunt day to see the sunrise-window wind, then tap <b>Find my best blind spots</b> for the top 5 places to set a blind, with which way to face and where to walk in from.</li>
     <li>Scouting tip: look for a bench (green) on a steep side-hill above a draw (blue) or creek, close to oak or pine-oak (red/orange in Forest types). Check your wind before you sit.</li>
     <li><b>Share</b> (top bar) gives your buddies the app by QR code or link. Any waypoint can be texted as a link that opens in their app.</li>
   </ul>

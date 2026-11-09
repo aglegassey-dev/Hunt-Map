@@ -17,7 +17,7 @@ class LRU {
   set(k, v) { this.m.set(k, v); if (this.m.size > this.n) this.m.delete(this.m.keys().next().value); }
   delete(k) { this.m.delete(k); }
 }
-const demCache = new LRU(48), evtCache = new LRU(48);
+const demCache = new LRU(28), evtCache = new LRU(24);
 
 class NetErr extends Error {}
 async function fetchLerc(url) {
@@ -329,6 +329,233 @@ async function pointInfo(lat, lon) {
   return out;
 }
 
+
+// ------------------------------------------------------------------ morning blind planner
+// Planning raster = z14 pixel grid (~6.9 m cells). Each cell summarises a 4×4 block of z16 LiDAR pixels
+// (elevation, slope, bench/ridge/draw) plus the LANDFIRE forest category, which is natively that grid.
+const PZ = 16, CPT = 64; // cells per z16 tile side
+const CAT_IDX = { oak: 1, pineoak: 2, hardwood: 3, mixed: 4, conifer: 5, wetforest: 6, wetopen: 7, field: 8, shrub: 9 };
+const CAT_NAME = ['', 'oak', 'pine-oak', 'hardwoods', 'mixed woods', 'conifer', 'swamp forest', 'marsh', 'field', 'young growth'];
+// per-category value for: food (morning: deer leaving it), bedding/cover (where they're heading)
+const FOOD = [0, 1, 0.8, 0.6, 0.3, 0, 0, 0, 0.7, 0.3];
+const BED = [0, 0, 0.2, 0, 0.2, 0.6, 0.9, 0.5, 0, 0.8];
+const planTiles = new Map();
+const RINGS = [2, 3, 4, 6, 8, 10, 13, 16, 20, 25, 30, 36];
+const NA = 16, NR = RINGS.length;
+let plan = null; // { cands, cellM, polys }
+
+async function planTile(tx, ty) {
+  const k = `${tx}/${ty}`;
+  if (planTiles.has(k)) return planTiles.get(k);
+  const out = { elev: new Float32Array(CPT * CPT).fill(NaN), slope: new Float32Array(CPT * CPT), feat: new Uint8Array(CPT * CPT), cat: new Uint8Array(CPT * CPT) };
+  const g = await getGrid(PZ, tx, ty);
+  if (!g.empty) {
+    const { sl } = derive(g, 'grad'), ft = derive(g, 'feat');
+    for (let cy = 0; cy < CPT; cy++) for (let cx = 0; cx < CPT; cx++) {
+      let es = 0, ss = 0, n = 0; const fc = [0, 0, 0, 0];
+      for (let j = 0; j < 4; j++) for (let i = 0; i < 4; i++) {
+        const q = (DEM_BUF + cy * 4 + j) * W + DEM_BUF + cx * 4 + i;
+        if (!g.valid[q]) continue;
+        es += g.e[q]; ss += sl[q]; fc[ft[q]]++; n++;
+      }
+      const c = cy * CPT + cx;
+      if (n) {
+        out.elev[c] = es / n; out.slope[c] = ss / n;
+        out.feat[c] = fc[1] >= 4 ? 1 : fc[3] >= 8 ? 3 : fc[2] >= 8 ? 2 : 0;
+      }
+    }
+  }
+  try {
+    const t = await getEvt(14, tx >> 2, ty >> 2), ox = (tx & 3) * CPT, oy = (ty & 3) * CPT;
+    for (let cy = 0; cy < CPT; cy++) for (let cx = 0; cx < CPT; cx++) {
+      const q = (oy + cy) * t.w + ox + cx;
+      if (t.mask && !t.mask[q]) continue;
+      const e = EVT[t.codes[q]]; if (e) out.cat[cy * CPT + cx] = CAT_IDX[e[0]] || 0;
+    }
+  } catch { /* forest unavailable: terrain-only scoring */ }
+  planTiles.set(k, out);
+  return out;
+}
+
+function cellAt(X, Y) {
+  const t = planTiles.get(`${X >> 6}/${Y >> 6}`);
+  return t ? { t, i: (Y & 63) * CPT + (X & 63) } : null;
+}
+const cellToLonLat = (X, Y) => {
+  const n = 2 ** 22; // z14 tiles × 256 px
+  return [((X + 0.5) / n) * 360 - 180, (Math.atan(Math.sinh(Math.PI * (1 - (2 * (Y + 0.5)) / n))) * 180) / Math.PI];
+};
+const lonLatToCell = (lon, lat) => { const f = lonLatToTileF(lon, lat, 14); return [Math.floor(f.x * 256), Math.floor(f.y * 256)]; };
+const angDiff = (a, b) => { const d = Math.abs(a - b) % 360; return d > 180 ? 360 - d : d; };
+
+function pip(lon, lat, geom) {
+  const polys = geom.type === 'MultiPolygon' ? geom.coordinates : [geom.coordinates];
+  return polys.some((poly) => {
+    let c = false;
+    for (const ring of poly) for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [xi, yi] = ring[i], [xj, yj] = ring[j];
+      if ((yi > lat) !== (yj > lat) && lon < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) c = !c;
+    }
+    return c;
+  });
+}
+function edgeDist(lon, lat, geom) {
+  const kx = 111320 * Math.cos((lat * Math.PI) / 180), ky = 110540;
+  const polys = geom.type === 'MultiPolygon' ? geom.coordinates : [geom.coordinates];
+  let best = Infinity;
+  for (const poly of polys) for (const r of poly) for (let i = 1; i < r.length; i++) {
+    const ax = (r[i - 1][0] - lon) * kx, ay = (r[i - 1][1] - lat) * ky, bx = (r[i][0] - lon) * kx, by = (r[i][1] - lat) * ky;
+    const dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy, t = L2 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / L2)) : 0;
+    best = Math.min(best, Math.hypot(ax + t * dx, ay + t * dy));
+  }
+  return best;
+}
+const sampleValues = (c) => {
+  if (!c) return null;
+  const { t, i } = c, f = t.feat[i], cat = t.cat[i], sl = t.slope[i];
+  if (Number.isNaN(t.elev[i])) return null;
+  const travel = Math.min(1, (f === 1 ? 1 : f === 3 ? 0.7 : f === 2 ? 0.5 : 0) + (sl > 18 ? 0.15 : 0));
+  const bed = Math.min(1, BED[cat] + (f === 1 ? 0.6 : 0) + (cat === 5 && sl > 12 ? 0.2 : 0));
+  return { travel, bed, food: FOOD[cat], f, cat };
+};
+
+async function planPrep(m, progress) {
+  const { parcels, addresses, buffer = 260, minEdge = 35, safety = 106 } = m;
+  // tiles covering every huntable parcel + buffer
+  const need = new Set();
+  for (const p of parcels) {
+    const [w, s, e, n] = p.bbox, padLon = buffer / (111320 * Math.cos((s * Math.PI) / 180)), padLat = buffer / 110540;
+    const a = lonLatToTileF(w - padLon, n + padLat, PZ), b = lonLatToTileF(e + padLon, s - padLat, PZ);
+    for (let x = Math.floor(a.x); x <= Math.floor(b.x); x++) for (let y = Math.floor(a.y); y <= Math.floor(b.y); y++) need.add(`${x}/${y}`);
+  }
+  const list = [...need]; let done = 0, missing = 0, idx = 0;
+  const worker = async () => {
+    while (idx < list.length) {
+      const [x, y] = list[idx++].split('/').map(Number);
+      try { await planTile(x, y); } catch { missing++; }
+      progress(++done / list.length);
+    }
+  };
+  await Promise.all(Array.from({ length: 6 }, worker));
+  const lat0 = parcels[0] ? (parcels[0].bbox[1] + parcels[0].bbox[3]) / 2 : 43.86;
+  const cellM = ((2 * Math.PI * 6378137) / 2 ** 22) * Math.cos((lat0 * Math.PI) / 180);
+  const addrCells = addresses.map(([lon, lat]) => [lon, lat]);
+  const cands = [];
+  parcels.forEach((p, pi) => {
+    const [w, s, e, n] = p.bbox, [x0, y0] = lonLatToCell(w, n), [x1, y1] = lonLatToCell(e, s);
+    for (let Y = y0; Y <= y1; Y++) for (let X = x0; X <= x1; X++) {
+      const [lon, lat] = cellToLonLat(X, Y);
+      if (!pip(lon, lat, p.geometry)) continue;
+      const ed = edgeDist(lon, lat, p.geometry); if (ed < minEdge) continue;
+      const kx = 111320 * Math.cos((lat * Math.PI) / 180);
+      if (addrCells.some(([ax, ay]) => Math.hypot((ax - lon) * kx, (ay - lat) * 110540) < safety)) continue;
+      const c = cellAt(X, Y); if (!c || Number.isNaN(c.t.elev[c.i])) continue;
+      // local fall line at ~40 m for thermals
+      const g6 = (dx, dy) => { const q = cellAt(X + dx, Y + dy); return q ? q.t.elev[q.i] : NaN; };
+      const ex = (g6(6, 0) - g6(-6, 0)) / (12 * cellM), ey = (g6(0, 6) - g6(0, -6)) / (12 * cellM);
+      const relief = Number.isFinite(ex + ey) ? (Math.atan(Math.hypot(ex, ey)) * 180) / Math.PI : 0;
+      const downhill = Number.isFinite(ex + ey) ? ((Math.atan2(-ex, ey) * 180) / Math.PI + 360) % 360 : 0; // bearing water would run
+      // static ring samples
+      const travel = new Float32Array(NA * NR), bed = new Float32Array(NA * NR), food = new Float32Array(NA * NR), feat = new Uint8Array(NA * NR), cat = new Uint8Array(NA * NR);
+      for (let a = 0; a < NA; a++) {
+        const ang = (a * 360) / NA, sx = Math.sin((ang * Math.PI) / 180), sy = -Math.cos((ang * Math.PI) / 180);
+        for (let r = 0; r < NR; r++) {
+          const v = sampleValues(cellAt(X + Math.round(sx * RINGS[r]), Y + Math.round(sy * RINGS[r])));
+          const q = a * NR + r; if (!v) continue;
+          travel[q] = v.travel; bed[q] = v.bed; food[q] = v.food; feat[q] = v.f; cat[q] = v.cat;
+        }
+      }
+      cands.push({ X, Y, lon, lat, pi, ed, slope: c.t.slope[c.i], elev: c.t.elev[c.i], hereCat: c.t.cat[c.i], hereFeat: c.t.feat[c.i], relief, downhill, travel, bed, food, feat, cat });
+    }
+  });
+  plan = { cands, cellM, parcels };
+  return { tiles: list.length, missing, candidates: cands.length };
+}
+
+function scoreCand(k, wind, thermal, detail) {
+  const { cellM } = plan, mph = wind.mph ?? 6, down = (wind.dir + 180) % 360;
+  const hw = mph >= 9 ? 25 : mph >= 4 ? 35 : 55;
+  const tw = thermal * (1 - Math.min(mph, 10) / 10) * (k.relief > 4 ? 1 : 0.3);
+  let sight = 0, sightW = 0, scent = 0, scentW = 0;
+  let food = { d: Infinity }, bed = { d: Infinity };
+  const travelSeen = [], scentCats = new Float32Array(10);
+  const sightByAng = new Float32Array(NA);
+  for (let a = 0; a < NA; a++) {
+    const ang = (a * 360) / NA, inWind = angDiff(ang, down) <= hw, inTh = tw > 0.05 && angDiff(ang, k.downhill) <= 40;
+    for (let r = 0; r < NR; r++) {
+      const q = a * NR + r, d = RINGS[r] * cellM;
+      const tv = k.travel[q], bv = k.bed[q], fv = k.food[q];
+      if (inWind || inTh) {
+        // morning: deer may still be on food at first light and are heading to bed, so both count against scent
+        if (d <= 260) { const w = ((inWind ? 1 : 0) + (inTh ? tw : 0)) * (1 - d / 300); scent += (bv + 0.6 * tv + 0.45 * fv) * w; scentW += w; scentCats[k.cat[q]] += w; }
+      } else if (d <= 90) {
+        const w = 1 - d / 110; sight += tv * w; sightW += w; sightByAng[a] += tv * w + 0.3 * fv * w;
+        if (detail && tv > 0.4 && k.feat[q]) travelSeen.push({ f: k.feat[q], d, ang });
+      }
+      if (fv >= 0.6 && d < food.d) food = { d, ang, cat: k.cat[q] };
+      if (bv >= 0.7 && d < bed.d) bed = { d, ang, cat: k.cat[q], f: k.feat[q] };
+    }
+  }
+  const sightS = sightW ? sight / sightW : 0, scentS = scentW ? scent / scentW : 0;
+  const nf = food.d < 220 ? 1 - food.d / 240 : 0, nb = bed.d < 220 ? 1 - bed.d / 240 : 0;
+  const sep = food.d < Infinity && bed.d < Infinity && angDiff(food.ang, bed.ang) > 60 ? 1 : 0.6;
+  const trans = nf * nb * sep;
+  const setup = Math.max(0, 1 - k.slope / 16);
+  let score = 0.4 * Math.min(1, sightS * 2.2) + 0.28 * trans + 0.12 * setup + 0.1 * nf + 0.05 * Math.min(1, k.ed / 120)
+    - 0.55 * Math.min(1, scentS * 1.6);
+  if (bed.d < 220 && angDiff(bed.ang, down) <= hw) score -= 0.12; // deer heading to bed would cross your scent
+  if (k.slope > 14) score -= 0.4; // no flat ground for a blind
+  if (!detail) return score;
+  // ---- human-readable reasons
+  const reasons = [], warn = [];
+  const yd = (m) => `${Math.round(m * 1.0936)} yd`, card = (a) => ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][Math.round(a / 45) % 8];
+  const cap = (t) => t[0].toUpperCase() + t.slice(1);
+  const where = (d, ang) => (d < 20 ? 'right beside you' : `${yd(d)} ${card(ang)}`);
+  const FEAT = ['', 'bench', 'ridge/spur', 'draw / creek bottom'];
+  const seen = {};
+  travelSeen.sort((p, q) => (p.f === 1 ? -1 : 0) - (q.f === 1 ? -1 : 0) || p.d - q.d).forEach((t) => {
+    if (!seen[t.f] && Object.keys(seen).length < 2) { seen[t.f] = 1; reasons.push(`${cap(FEAT[t.f])} ${where(t.d, t.ang)}: deer travel`); }
+  });
+  if (food.d < Infinity) reasons.push(`${cap(CAT_NAME[food.cat])} ${where(food.d, food.ang)}: morning food source`);
+  if (bed.d < Infinity) reasons.push(`${bed.f === 1 && !BED[bed.cat] ? 'Bench' : cap(CAT_NAME[bed.cat])} ${where(bed.d, bed.ang)}: where deer head to bed`);
+  if (food.d < Infinity && bed.d < Infinity && angDiff(food.ang, bed.ang) > 60) reasons.push('You sit between food and bedding: on their way back');
+  reasons.push(`${k.slope < 5 ? 'Flat' : 'Gentle'} ground for the blind (${Math.round(k.slope)}°)`);
+  if (k.hereCat === 8 || k.hereCat === 7) warn.push('Spot is in the open: tuck the blind into the edge or brush it in');
+  let topCat = 0; for (let c = 1; c < 10; c++) if (scentCats[c] > scentCats[topCat]) topCat = c;
+  const scentOver = topCat ? CAT_NAME[topCat] : 'open ground';
+  if (scentS < 0.22) reasons.push(`Your scent blows ${card(down)}, away from food, bedding and travel`);
+  else warn.push(`Some scent reaches ${scentOver} to the ${card(down)}`);
+  if (bed.d < 220 && angDiff(bed.ang, down) <= hw) warn.push('Bedding is downwind: deer heading to bed may wind you');
+  if (tw > 0.2) warn.push(`Before the sun warms things up, thermals pull scent downhill to the ${card(k.downhill)}`);
+  if (mph < 4) warn.push('Light wind: expect swirling, so keep scent control tight');
+  let face = 0; for (let a = 1; a < NA; a++) if (sightByAng[a] > sightByAng[face]) face = a;
+  return { score, reasons, warn, face: card((face * 360) / NA), approach: card(down), trans, sightS, scentS };
+}
+
+function planScore(m) {
+  if (!plan) throw new Error('not prepared');
+  const { wind, thermal = 0.6, top = 5, minSep = 120 } = m;
+  const scores = plan.cands.map((k) => scoreCand(k, wind, thermal, false));
+  let max = -Infinity, min = Infinity; scores.forEach((s) => { if (s > max) max = s; if (s < min) min = s; });
+  const order = scores.map((s, i) => [s, i]).sort((a, b) => b[0] - a[0]);
+  const picks = [];
+  for (const [s, i] of order) {
+    if (picks.length >= top || s < 0.15) break;
+    const k = plan.cands[i];
+    if (picks.some((p) => Math.hypot((p.k.X - k.X) * plan.cellM, (p.k.Y - k.Y) * plan.cellM) < minSep)) continue;
+    picks.push({ k, s });
+  }
+  const spots = picks.map(({ k }) => {
+    const d = scoreCand(k, wind, thermal, true), p = plan.parcels[k.pi];
+    return { lat: k.lat, lon: k.lon, elev: k.elev, parcel: p.name, status: p.status, rating: Math.max(1, Math.min(5, Math.round(d.score * 7))), ...d };
+  });
+  // heat map cells (score normalised to the best spot)
+  const span = Math.max(1e-6, max - Math.max(0, min));
+  const heat = new Float32Array(plan.cands.length * 3);
+  plan.cands.forEach((k, i) => { heat[i * 3] = k.X; heat[i * 3 + 1] = k.Y; heat[i * 3 + 2] = Math.max(0, (scores[i] - Math.max(0, min)) / span); });
+  return { spots, heat };
+}
+
 // ------------------------------------------------------------------ messages
 self.onmessage = async ({ data: m }) => {
   try {
@@ -344,6 +571,8 @@ self.onmessage = async ({ data: m }) => {
       if (res.pixels) transfer = [res.pixels.buffer];
       if (res.segs) transfer = [res.segs.buffer, res.idx.buffer];
     } else if (m.kind === 'point') res = await pointInfo(m.lat, m.lon);
+    else if (m.kind === 'planPrep') res = await planPrep(m, (f) => self.postMessage({ id: m.id, progress: f }));
+    else if (m.kind === 'planScore') { res = planScore(m); transfer = [res.heat.buffer]; }
     self.postMessage({ id: m.id, ok: true, res }, transfer);
   } catch (e) {
     self.postMessage({ id: m.id, ok: false, err: String(e.message || e), offline: e instanceof NetErr });

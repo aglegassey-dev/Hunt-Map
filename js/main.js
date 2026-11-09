@@ -1,11 +1,11 @@
-import { contains, nearestEdge, distM, bearingDeg, cardinal, yd, ft, esc, sunTimes, hm, fmtDate } from './geo.js';
+import { contains, nearestEdge, distM, bearingDeg, cardinal, yd, ft, esc, sunTimes, hm, fmtDate, bboxOf } from './geo.js';
 import { BASES, OVERLAYS, PRESETS, GROUPS, FOREST_CATS, FEATURE_LEGEND, settings, setupPanes, makeLayer } from './layers.js';
-import { pointInfo, contourStyle } from './terrain.js';
+import { pointInfo, contourStyle, planPrep, planScore } from './terrain.js';
 import { APP_URL, waypointsLink, parseShared, shareUrl, copyText, qrSvg } from './share.js';
 import { db, uid } from './db.js';
 import { toGPX, parseGeoFile, shareOrDownload } from './gpx.js';
 import { planDownload, download, recordArea, listAreas, removeAreaRecord, clearAll, storageText, planPreserves, PACK_LEVELS, PACK_ID } from './offline.js';
-import { getWind, windArrow } from './weather.js';
+import { getWind, windArrow, getForecast, summarizeWind } from './weather.js';
 
 const L = window.L;
 const D = window.HUNT_DATA;
@@ -719,20 +719,145 @@ $('offAreas').addEventListener('click', (e) => {
   } else { removeAreaRecord(a.id); renderOffline(); toast('Removed from list (tiles stay cached until "Clear all")'); }
 });
 
-// ===================================================================== wind
+// ===================================================================== wind chip + morning hunt plan
 async function refreshWind() {
   const p = lastFix || { lat: map.getCenter().lat, lon: map.getCenter().lng };
   try {
     const w = await getWind(p.lat, p.lon);
     $('windChip').innerHTML = `${windArrow(w.dir)} ${w.card} ${Math.round(w.speed)}<small>mph</small><span class="wtemp"> · ${Math.round(w.temp)}°</span>`;
     $('windChip').style.display = '';
-    $('windBody').innerHTML = `<p class="muted">Arrows point where the wind carries your scent. Wind is named by where it blows from.</p>` +
-      `<div class="wind-now">${windArrow(w.dir, 40)}<div><b>${w.card} ${Math.round(w.speed)} mph</b><small>Gusts ${Math.round(w.gust)} mph · ${Math.round(w.temp)}°F</small></div></div>` +
-      `<div class="hours">${w.hourly.map((h) => `<div><small>${h.time.toLocaleTimeString([], { hour: 'numeric' })}</small>${windArrow(h.dir, 22)}<b>${cardinal(h.dir)}</b><small>${Math.round(h.speed)} mph</small><small>${Math.round(h.temp)}°</small></div>`).join('')}</div>`;
-  } catch { if (!navigator.onLine) $('windChip').style.display = 'none'; }
+  } catch { $('windChip').innerHTML = '🎯 <small>Plan</small>'; $('windChip').style.display = ''; }
 }
-$('windChip').onclick = () => openSheet('sheetWind');
+$('windChip').onclick = () => { openSheet('sheetWind'); renderPlan(); };
 refreshWind(); setInterval(refreshWind, 15 * 60000);
+
+const huntParcels = feats.filter((f) => f.properties.status === 'firearm' || f.properties.status === 'bow');
+const planCenter = (() => { const b = huntParcels.reduce((a, f) => { const x = f.bbox || bboxOf(f.geometry); return [Math.min(a[0], x[0]), Math.min(a[1], x[1]), Math.max(a[2], x[2]), Math.max(a[3], x[3])]; }, [180, 90, -180, -90]); return { lat: (b[1] + b[3]) / 2, lon: (b[0] + b[2]) / 2 }; })();
+const DIRS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+let planDay = 0, planOverride = null, planPrepared = null, planHeat = null, planPins = null, planWindNow = null, lastPlan = null;
+
+function dayStart(offset) { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + offset); return d; }
+function morningWindow(offset) {
+  const d = dayStart(offset), st = sunTimes(new Date(d.getTime() + 12 * 3600e3), planCenter.lat, planCenter.lon);
+  return { legal: new Date(st.rise - 30 * 60000), rise: st.rise, end: new Date(+st.rise + 3 * 3600e3), date: d };
+}
+async function renderPlan() {
+  // day chips (Sundays flagged: no hunting in Maine)
+  $('planDays').innerHTML = [...Array(7)].map((_, i) => {
+    const d = dayStart(i), sun = d.getDay() === 0;
+    const label = i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : d.toLocaleDateString([], { weekday: 'short' });
+    return `<button class="chip ${i === planDay ? 'sel' : ''}" data-day="${i}">${label}<small>${sun ? 'Sun · no hunting' : d.toLocaleDateString([], { month: 'short', day: 'numeric' })}</small></button>`;
+  }).join('');
+  $('planCompass').innerHTML = DIRS.map((c, i) => `<button data-dir="${i * 45}" class="${planOverride && planOverride.dir === i * 45 ? 'sel' : ''}">${windArrow(i * 45, 18)}<b>${c}</b></button>`).join('');
+  document.querySelectorAll('#planSpeed button').forEach((b) => b.classList.toggle('sel', !!planOverride && +b.dataset.mph === planOverride.mph));
+  const win = morningWindow(planDay);
+  const sunday = win.date.getDay() === 0;
+  let hours = [], sum = null, err = '';
+  try {
+    const fc = await getForecast(planCenter.lat, planCenter.lon);
+    hours = fc.filter((h) => +h.time >= +win.legal - 3600e3 && +h.time <= +win.end);
+    sum = summarizeWind(hours.filter((h) => +h.time >= +win.legal - 1800e3));
+  } catch { err = navigator.onLine ? 'Forecast unavailable right now.' : 'No signal: forecast unavailable. Pick the wind below.'; }
+  planWindNow = planOverride || (sum ? { dir: sum.dir, mph: sum.mph } : null);
+  const thermalNote = 'At first light, cool air drains <b>downhill</b> and carries your scent down slopes and into creek bottoms. As the sun warms the ground (about 1–2 h after sunrise) it flips and rises. Wind over ~8 mph overrides thermals.';
+  $('planWind').innerHTML = `<div class="plan-sum">
+      ${sunday ? '<div class="alert stop" style="margin:0">Sunday: no hunting in Maine.</div>' : ''}
+      <div class="meta">Legal light <b>${hm(win.legal)}</b> · sunrise <b>${hm(win.rise)}</b> · plan window to ${hm(win.end)}</div>
+      ${sum ? `<div class="big">${windArrow(sum.dir, 42)}<div><b>${sum.card} ${Math.round(sum.lo)}–${Math.round(sum.hi)} mph</b>
+        <small>${sum.steady ? 'Steady direction' : `Shifting up to ${Math.round(sum.spread)}°: pick spots that work for both`} · gusts ${Math.round(sum.gust)} mph</small></div></div>` : `<div class="meta">${err}</div>`}
+      ${planOverride ? `<div class="meta">Planning for your chosen wind: <b>${cardinal(planOverride.dir)} ~${planOverride.mph} mph</b> <a href="#" id="planClear">use forecast</a></div>` : ''}
+      ${hours.length ? `<div class="hours">${hours.map((h) => `<div><small>${h.time.toLocaleTimeString([], { hour: 'numeric' })}</small>${windArrow(h.dir, 22)}<b>${cardinal(h.dir)}</b><small>${Math.round(h.speed)} mph</small><small>${Math.round(h.temp)}°${h.pop >= 30 ? ` · ${h.pop}%💧` : ''}</small></div>`).join('')}</div>` : ''}
+      <div class="meta">${thermalNote}</div>
+    </div>`;
+  const clr = $('planClear'); if (clr) clr.onclick = (e) => { e.preventDefault(); planOverride = null; renderPlan(); };
+  $('planGo').disabled = !planWindNow;
+  $('planGo').textContent = planWindNow ? `🎯 Find best blind spots for a ${cardinal(planWindNow.dir)} wind` : '🎯 Pick a wind below first';
+}
+$('planDays').addEventListener('click', (e) => { const b = e.target.closest('[data-day]'); if (b) { planDay = +b.dataset.day; renderPlan(); } });
+$('planCompass').addEventListener('click', (e) => { const b = e.target.closest('[data-dir]'); if (b) { planOverride = { dir: +b.dataset.dir, mph: planOverride?.mph ?? 7 }; renderPlan(); } });
+$('planSpeed').addEventListener('click', (e) => { const b = e.target.closest('[data-mph]'); if (b) { planOverride = { dir: planOverride?.dir ?? planWindNow?.dir ?? 315, mph: +b.dataset.mph }; renderPlan(); } });
+
+$('planGo').onclick = async () => {
+  if (!planWindNow) return;
+  $('planGo').disabled = true; $('planProg').style.display = ''; $('planResults').innerHTML = '';
+  const prog = (f, t) => { $('planBar').style.width = `${Math.round(f * 100)}%`; $('planProgTxt').textContent = t; };
+  try {
+    if (!planPrepared) {
+      prog(0, 'Reading LiDAR terrain and forest data…');
+      const parcels = huntParcels.map((f) => ({ name: f.properties.name, status: f.properties.status, geometry: f.geometry, bbox: f.bbox || bboxOf(f.geometry) }));
+      planPrepared = await planPrep(parcels, D.addresses, (f) => prog(f * 0.95, `Analyzing terrain… ${Math.round(f * 100)}%`));
+      if (planPrepared.missing > planPrepared.tiles * 0.3) toast('Some terrain is missing offline. Download all preserves for full results.', 6000);
+    }
+    prog(0.97, 'Scoring spots for the wind…');
+    const res = await planScore({ dir: planWindNow.dir, mph: planWindNow.mph }, 0.6);
+    lastPlan = { ...res, wind: planWindNow };
+    showPlanResults(res);
+  } catch (e) { toast('Could not plan: ' + e.message, 6000); planPrepared = null; }
+  $('planProg').style.display = 'none'; $('planGo').disabled = false;
+};
+
+function stars(n) { return '★'.repeat(n) + '☆'.repeat(5 - n); }
+function showPlanResults({ spots, heat }) {
+  drawHeat(heat); drawPins(spots);
+  if (spots.length) map.fitBounds(L.latLngBounds(spots.map((sp) => [sp.lat, sp.lon])).pad(0.25), { maxZoom: 16, paddingBottomRight: [0, 120] });
+  if (!spots.length) { $('planResults').innerHTML = '<p class="muted">No strong spots for this wind. Try another day or wind direction.</p>'; return; }
+  $('planResults').innerHTML = `<h3>Best blind spots: ${cardinal(lastPlan.wind.dir)} wind</h3>` + spots.map((sp, i) => `
+    <div class="spot">
+      <div class="spot-top"><span class="spot-rank">${i + 1}</span><span class="grow"><b>${esc(sp.parcel)}${sp.status === 'bow' ? ' · bow only' : ''}</b>
+        <small><span class="stars">${stars(sp.rating)}</span> · ${ft(sp.elev)}${lastFix ? ` · ${yd(distM(lastFix.lon, lastFix.lat, sp.lon, sp.lat))} from you` : ''}</small></span></div>
+      <div class="how"><span>Face <b>${sp.face}</b></span><span>Walk in from the <b>${sp.approach}</b></span></div>
+      <ul>${sp.reasons.map((r) => `<li>${esc(r)}</li>`).join('')}${sp.warn.map((w) => `<li class="w">${esc(w)}</li>`).join('')}</ul>
+      <div class="btnrow"><button class="btn small" data-pshow="${i}">Show</button><button class="btn small" data-pgo="${i}">Go</button><button class="btn small primary" data-psave="${i}">Save as blind</button></div>
+    </div>`).join('') +
+    '<label class="ov-row"><span class="grow"><b>Show heat map</b><small>Brighter = better for this wind</small></span><input type="checkbox" class="switch" id="planHeatToggle" checked></label>';
+  $('planHeatToggle').onchange = (e) => { if (planHeat) (e.target.checked ? planHeat.addTo(map) : map.removeLayer(planHeat)); };
+}
+$('planResults').addEventListener('click', async (e) => {
+  const sh = e.target.closest('[data-pshow]'), go = e.target.closest('[data-pgo]'), sv = e.target.closest('[data-psave]');
+  const sp = lastPlan?.spots[+(sh || go || sv)?.dataset[sh ? 'pshow' : go ? 'pgo' : 'psave']];
+  if (!sp) return;
+  if (sh) { closeSheets(); map.setView([sp.lat, sp.lon], 17); showSpot(L.latLng(sp.lat, sp.lon)); }
+  if (go) startNav({ lat: sp.lat, lon: sp.lon, name: `Blind: ${sp.parcel}` });
+  if (sv) {
+    const rec = { id: uid(), lat: sp.lat, lon: sp.lon, type: 'blind', name: `Blind ${cardinal(lastPlan.wind.dir)} wind · ${sp.parcel}`.slice(0, 60),
+      notes: `${cardinal(lastPlan.wind.dir)} wind. Face ${sp.face}, walk in from the ${sp.approach}.\n` + sp.reasons.join('\n') + (sp.warn.length ? '\n⚠ ' + sp.warn.join('\n⚠ ') : ''),
+      photos: [], created: Date.now(), elev: sp.elev };
+    await db.put('waypoints', rec); waypoints.unshift(rec); drawWaypoint(rec); toast('Saved as a blind waypoint');
+  }
+});
+
+function drawPins(spots) {
+  planPins?.remove();
+  planPins = L.layerGroup(spots.map((sp, i) => L.marker([sp.lat, sp.lon], { zIndexOffset: 800,
+    icon: L.divIcon({ className: 'blind-pin', iconSize: [30, 30], iconAnchor: [15, 15], html: `<div>${i + 1}</div>` }) })
+    .on('click', (e) => { L.DomEvent.stop(e); openSheet('sheetWind'); document.querySelectorAll('.spot')[i]?.scrollIntoView({ behavior: 'smooth' }); }))).addTo(map);
+}
+function drawHeat(heat) {
+  planHeat?.remove(); planHeat = null;
+  const n = heat.length / 3; if (!n) return;
+  // group cells by parcel-sized clusters: one image per 128-cell block keeps Mercator distortion negligible
+  const blocks = new Map();
+  for (let i = 0; i < n; i++) {
+    const X = heat[i * 3], Y = heat[i * 3 + 1], v = heat[i * 3 + 2], k = `${X >> 7}/${Y >> 7}`;
+    let b = blocks.get(k); if (!b) blocks.set(k, (b = []));
+    b.push(X, Y, v);
+  }
+  const layers = [];
+  const toLL = (X, Y) => { const nn = 2 ** 22; return [(Math.atan(Math.sinh(Math.PI * (1 - (2 * Y) / nn))) * 180) / Math.PI, (X / nn) * 360 - 180]; };
+  for (const [k, b] of blocks) {
+    const [bx, by] = k.split('/').map(Number), X0 = bx << 7, Y0 = by << 7;
+    const c = document.createElement('canvas'); c.width = c.height = 128;
+    const ctx = c.getContext('2d'), img = ctx.createImageData(128, 128);
+    for (let i = 0; i < b.length; i += 3) {
+      const v = b[i + 2]; if (v < 0.35) continue;
+      const t = (v - 0.35) / 0.65, o = ((b[i + 1] - Y0) * 128 + (b[i] - X0)) * 4;
+      img.data[o] = 255; img.data[o + 1] = Math.round(220 - 170 * t); img.data[o + 2] = Math.round(60 - 40 * t); img.data[o + 3] = Math.round(70 + 150 * t);
+    }
+    ctx.putImageData(img, 0, 0);
+    layers.push(L.imageOverlay(c.toDataURL(), [toLL(X0, Y0 + 128), toLL(X0 + 128, Y0)], { pane: 'terrain', opacity: 0.85, interactive: false, className: 'heat-img' }));
+  }
+  planHeat = L.layerGroup(layers).addTo(map);
+}
 
 // ===================================================================== sharing
 async function shareWaypoints(list, title) {

@@ -6,12 +6,17 @@ let seq = 0;
 const pending = new Map();
 worker.onmessage = ({ data }) => {
   const p = pending.get(data.id); if (!p) return;
+  if (data.progress != null) { p.onProgress?.(data.progress); return; }
   pending.delete(data.id);
   data.ok ? p.resolve(data.res) : p.reject(Object.assign(new Error(data.err), { offline: data.offline }));
 };
-const ask = (msg, transfer) => new Promise((resolve, reject) => {
-  const id = ++seq; pending.set(id, { resolve, reject }); worker.postMessage({ ...msg, id }, transfer || []);
+const ask = (msg, transfer, onProgress) => new Promise((resolve, reject) => {
+  const id = ++seq; pending.set(id, { resolve, reject, onProgress }); worker.postMessage({ ...msg, id }, transfer || []);
 });
+
+/** Morning blind planner: prepare the terrain/forest raster for the huntable parcels, then score for a wind. */
+export const planPrep = (parcels, addresses, onProgress) => ask({ kind: 'planPrep', parcels, addresses }, [], onProgress);
+export const planScore = (wind, thermal) => ask({ kind: 'planScore', wind, thermal });
 
 export const pointInfo = (lat, lon) => ask({ kind: 'point', lat, lon }).catch(() => ({}));
 

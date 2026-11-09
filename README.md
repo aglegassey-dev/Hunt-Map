@@ -33,7 +33,15 @@ It's a static installable web app (PWA): no build step, no server, no accounts. 
 - **Offline maps:** one tap on **Download all preserves** saves every layer for every preserve plus ~300 yd
   around it. You can pause and resume. When you zoom past the saved detail offline, the map sharpens the
   nearest saved tile instead of going blank.
-- **Wind:** current conditions and hourly forecast with scent-direction arrows (Open-Meteo).
+- **Morning hunt plan** (tap the wind chip): pick your hunt day (Sundays flagged) to see legal light, sunrise and
+  the hour-by-hour wind for the sitting window, with a thermals explainer. **Find my best blind spots** scores
+  every legal spot on the firearm/bow preserves for a morning ground blind and returns the top 5 plus a heat map.
+  Each spot says which way to face, which side to walk in from, why it scored well and what to watch out for.
+  You can save a spot as a blind waypoint or navigate to it. To plan for any wind, pick a direction and strength
+  (this also works offline once terrain is downloaded).
+  Scoring (in `js/terrain-worker.js`, `scoreCand`) favors flat ground near benches, draws and ridges, between food
+  (oak, fields) and bedding (swamp, thick conifer, benches), at least 35 m from boundaries and outside the
+  house zones. It penalizes spots where wind or morning downhill thermals carry scent over food, bedding or travel.
 
 Waypoints, photos and tracks are stored on the device (IndexedDB). Export a GPX as a backup.
 

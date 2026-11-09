@@ -207,3 +207,38 @@ input, textarea, select { font: inherit; color: var(--text); background: var(--b
 .spotbtns { flex-wrap: nowrap; gap: 6px; }
 .spotbtns .btn { padding: 6px 8px; white-space: nowrap; }
 .spotbtns .btn.x { flex: 0 0 40px; }
+
+/* ---------- morning plan ---------- */
+.days { margin: 2px 0 10px; flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px; }
+.days .chip { flex: none; height: 40px; flex-direction: column; gap: 0; line-height: 1.1; justify-content: center; font-size: 13px; }
+.days .chip small { font-size: 11px; }
+.days .chip.sel { background: var(--accent); color: #1A1406; }
+.days .chip.sel small { color: #3a2a08; }
+.plan-sum { background: var(--panel-2); border-radius: 14px; padding: 12px; display: grid; gap: 6px; margin-bottom: 8px; }
+.plan-sum .big { display: flex; align-items: center; gap: 12px; color: var(--accent); }
+.plan-sum .big b { color: var(--text); font-size: 20px; display: block; }
+.plan-sum .big small { color: var(--muted); }
+.plan-sum .meta { color: var(--muted); font-size: 13px; }
+.plan-sum .meta b { color: var(--text); }
+.override { margin: 6px 0 10px; }
+.override summary { color: var(--accent); font-weight: 600; cursor: pointer; padding: 6px 0; }
+.compass { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 6px 0; }
+.compass button { border: 2px solid transparent; background: var(--panel-2); border-radius: 10px; padding: 8px 0; font-weight: 700; color: var(--accent); display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.compass button b { color: var(--text); font-size: 13px; }
+.compass button.sel, #planSpeed button.sel { border-color: var(--accent); }
+.btn.big { width: 100%; min-height: 52px; font-size: 16px; margin: 4px 0; }
+.spot { background: var(--panel-2); border-radius: 14px; padding: 12px; margin: 10px 0; }
+.spot-top { display: flex; align-items: center; gap: 10px; }
+.spot-rank { width: 30px; height: 30px; border-radius: 50%; background: var(--accent); color: #1A1406; font-weight: 800; display: grid; place-items: center; flex: none; }
+.spot-top b { display: block; }
+.spot-top small { color: var(--muted); }
+.stars { color: var(--accent); letter-spacing: 1px; font-size: 13px; }
+.spot ul { margin: 8px 0 4px; padding-left: 18px; }
+.spot li { font-size: 13.5px; margin-bottom: 3px; }
+.spot li.w { color: #FFE08A; list-style: '⚠ '; }
+.spot .how { display: flex; gap: 8px; flex-wrap: wrap; font-size: 13px; margin: 6px 0; }
+.spot .how span { background: rgba(255,255,255,.07); padding: 4px 8px; border-radius: 8px; }
+.spot .how b { color: var(--text); }
+.blind-pin { background: none; border: 0; }
+.blind-pin div { width: 30px; height: 30px; border-radius: 50%; background: var(--accent); color: #1A1406; font-weight: 800; display: grid; place-items: center; border: 2px solid #fff; box-shadow: 0 2px 8px rgba(0,0,0,.5); font-size: 15px; }
+.wind-arrow-map { background: none; border: 0; pointer-events: none; }
