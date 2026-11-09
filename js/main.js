@@ -741,6 +741,9 @@ refreshWind(); setInterval(refreshWind, 15 * 60000);
 const huntParcels = feats.filter((f) => f.properties.status === 'firearm' || f.properties.status === 'bow');
 const planCenter = (() => { const b = huntParcels.reduce((a, f) => { const x = f.bbox || bboxOf(f.geometry); return [Math.min(a[0], x[0]), Math.min(a[1], x[1]), Math.max(a[2], x[2]), Math.max(a[3], x[3])]; }, [180, 90, -180, -90]); return { lat: (b[1] + b[3]) / 2, lon: (b[0] + b[2]) / 2 }; })();
 const DIRS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+const groupName = (n) => String(n).split(' (')[0].split(' – ')[0];
+const PRESERVES = [...new Set(huntParcels.map((f) => groupName(f.properties.name)))].sort();
+let planWhere = store.get('planWhere', []).filter((n) => PRESERVES.includes(n));
 let planDay = 0, planOverride = null, planPrepared = null, planHeat = null, planPins = null, planWindNow = null, lastPlan = null;
 
 function dayStart(offset) { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + offset); return d; }
@@ -755,6 +758,16 @@ async function renderPlan() {
     const label = i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : d.toLocaleDateString([], { weekday: 'short' });
     return `<button class="chip ${i === planDay ? 'sel' : ''}" data-day="${i}">${label}<small>${sun ? 'Sun · no hunting' : d.toLocaleDateString([], { month: 'short', day: 'numeric' })}</small></button>`;
   }).join('');
+  const meRef = lastFix || null;
+  const distTo = (name) => {
+    if (!meRef) return null;
+    let best = Infinity;
+    huntParcels.forEach((f) => { if (groupName(f.properties.name) === name) best = Math.min(best, nearestEdge(f, meRef.lon, meRef.lat).d); });
+    return best;
+  };
+  const list = PRESERVES.map((n) => ({ n, d: distTo(n) })).sort((a, b) => (a.d ?? 0) - (b.d ?? 0) || a.n.localeCompare(b.n));
+  $('planWhere').innerHTML = `<button class="cat ${planWhere.length ? '' : 'on'}" data-where="*">All preserves</button>` +
+    list.map(({ n, d }) => `<button class="cat ${planWhere.includes(n) ? 'on' : ''}" data-where="${esc(n)}">${esc(n)}${d != null ? ` <small>${d < 1609 ? yd(d) : (d / 1609.34).toFixed(1) + ' mi'}</small>` : ''}${huntParcels.some((f) => groupName(f.properties.name) === n && f.properties.status === 'bow') ? ' <small>bow</small>' : ''}</button>`).join('');
   $('planCompass').innerHTML = DIRS.map((c, i) => `<button data-dir="${i * 45}" class="${planOverride && planOverride.dir === i * 45 ? 'sel' : ''}">${windArrow(i * 45, 18)}<b>${c}</b></button>`).join('');
   document.querySelectorAll('#planSpeed button').forEach((b) => b.classList.toggle('sel', !!planOverride && +b.dataset.mph === planOverride.mph));
   const win = morningWindow(planDay);
@@ -778,9 +791,16 @@ async function renderPlan() {
     </div>`;
   const clr = $('planClear'); if (clr) clr.onclick = (e) => { e.preventDefault(); planOverride = null; renderPlan(); };
   $('planGo').disabled = !planWindNow;
-  $('planGo').textContent = planWindNow ? `🎯 Find best blind spots for a ${cardinal(planWindNow.dir)} wind` : '🎯 Choose the expected wind below first';
+  const whereTxt = !planWhere.length ? '' : planWhere.length === 1 ? ` in ${planWhere[0]}` : planWhere.length <= 3 ? ` in ${planWhere.join(' & ')}` : ` in ${planWhere.length} preserves`;
+  $('planGo').textContent = planWindNow ? `🎯 Best blind spots${whereTxt} · ${cardinal(planWindNow.dir)} wind` : '🎯 Choose the expected wind below first';
   if (!sum) $('planOverride').open = true; // no forecast (no signal): show the wind picker right away
 }
+$('planWhere').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-where]'); if (!b) return;
+  const n = b.dataset.where;
+  planWhere = n === '*' ? [] : planWhere.includes(n) ? planWhere.filter((x) => x !== n) : [...planWhere, n];
+  store.set('planWhere', planWhere); renderPlan();
+});
 $('planDays').addEventListener('click', (e) => { const b = e.target.closest('[data-day]'); if (b) { planDay = +b.dataset.day; renderPlan(); } });
 $('planCompass').addEventListener('click', (e) => { const b = e.target.closest('[data-dir]'); if (b) { planOverride = { dir: +b.dataset.dir, mph: planOverride?.mph ?? 7 }; renderPlan(); } });
 $('planSpeed').addEventListener('click', (e) => { const b = e.target.closest('[data-mph]'); if (b) { planOverride = { dir: planOverride?.dir ?? planWindNow?.dir ?? 315, mph: +b.dataset.mph }; renderPlan(); } });
@@ -793,11 +813,13 @@ $('planGo').onclick = async () => {
     if (!planPrepared) {
       prog(0, 'Reading LiDAR terrain and forest data…');
       const parcels = huntParcels.map((f) => ({ name: f.properties.name, status: f.properties.status, geometry: f.geometry, bbox: f.bbox || bboxOf(f.geometry) }));
-      planPrepared = await planPrep(parcels, D.addresses, (f) => prog(f * 0.95, `Analyzing terrain… ${Math.round(f * 100)}%`));
+      const noHunt = feats.filter((f) => f.properties.status === 'no').map((f) => ({ geometry: f.geometry, bbox: f.bbox || bboxOf(f.geometry) }));
+      planPrepared = await planPrep(parcels, D.addresses, (f) => prog(f * 0.95, `Analyzing terrain… ${Math.round(f * 100)}%`), noHunt);
       if (planPrepared.missing > planPrepared.tiles * 0.3) toast('Some terrain is missing offline. Download all preserves for full results.', 6000);
     }
     prog(0.97, 'Scoring spots for the wind…');
-    const res = await planScore({ dir: planWindNow.dir, mph: planWindNow.mph }, 0.6);
+    const per = planWhere.length && planWhere.length <= 3 ? 3 : 0;
+    const res = await planScore({ dir: planWindNow.dir, mph: planWindNow.mph }, 0.6, planWhere.length ? planWhere : null, per);
     lastPlan = { ...res, wind: planWindNow };
     showPlanResults(res);
   } catch (e) { toast('Could not plan: ' + e.message, 6000); planPrepared = null; }
@@ -806,10 +828,16 @@ $('planGo').onclick = async () => {
 
 function stars(n) { return '★'.repeat(n) + '☆'.repeat(5 - n); }
 function showPlanResults({ spots, heat }) {
+  if (planWhere.length && spots.length) { // rank within the user's chosen preserves
+    const top = Math.max(...spots.map((sp) => sp.score)), bot = Math.min(...spots.map((sp) => sp.score));
+    spots.forEach((sp) => { sp.rating = Math.max(1, Math.min(5, Math.round(2 + (3 * (sp.score - bot)) / Math.max(1e-6, top - bot)))); });
+  }
   drawHeat(heat); drawPins(spots);
   if (spots.length) map.fitBounds(L.latLngBounds(spots.map((sp) => [sp.lat, sp.lon])).pad(0.25), { maxZoom: 16, paddingBottomRight: [0, 120] });
   if (!spots.length) { $('planResults').innerHTML = '<p class="muted">No strong spots for this wind. Try another day or wind direction.</p>'; return; }
-  $('planResults').innerHTML = `<h3>Best blind spots: ${cardinal(lastPlan.wind.dir)} wind</h3>` + spots.map((sp, i) => `
+  let lastGroup = null;
+  const grouped = planWhere.length > 0 && planWhere.length <= 3;
+  $('planResults').innerHTML = `<h3>Best blind spots: ${cardinal(lastPlan.wind.dir)} wind</h3>${planWhere.length ? '<p class="muted small">Stars compare spots within your picked preserves.</p>' : ''}` + spots.map((sp, i) => `${grouped && sp.group !== lastGroup ? `<h3 class="grp">${esc((lastGroup = sp.group))}</h3>` : ''}
     <div class="spot">
       <div class="spot-top"><span class="spot-rank">${i + 1}</span><span class="grow"><b>${esc(sp.parcel)}${sp.status === 'bow' ? ' · bow only' : ''}</b>
         <small><span class="stars">${stars(sp.rating)}</span> · ${ft(sp.elev)}${lastFix ? ` · ${yd(distM(lastFix.lon, lastFix.lat, sp.lon, sp.lat))} from you` : ''}</small></span></div>
@@ -929,7 +957,7 @@ window.addEventListener('online', netBanner); window.addEventListener('offline',
 // 1) normal service-worker update (checked on launch and every time the app returns to the foreground)
 // 2) safety net: version.json is fetched straight from the server (never cached); if it's newer than this
 //    page, the app clears only its own app-file cache and reloads. Maps, waypoints and tracks are kept.
-const APP_VERSION = 'v6';
+const APP_VERSION = 'v7';
 $('appVersion').textContent = `Version ${APP_VERSION.slice(1)} · data ${D.built}`;
 let reloading = false;
 const busy = () => !!(editing || recording || document.querySelector('#sheetOffline.open') || packAbort);

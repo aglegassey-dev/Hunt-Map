@@ -420,7 +420,7 @@ const sampleValues = (c) => {
 };
 
 async function planPrep(m, progress) {
-  const { parcels, addresses, buffer = 260, minEdge = 35, safety = 106 } = m;
+  const { parcels, addresses, noHunt = [], buffer = 260, minEdge = 35, safety = 106 } = m;
   // tiles covering every huntable parcel + buffer
   const need = new Set();
   for (const p of parcels) {
@@ -447,6 +447,9 @@ async function planPrep(m, progress) {
       const [lon, lat] = cellToLonLat(X, Y);
       if (!pip(lon, lat, p.geometry)) continue;
       const ed = edgeDist(lon, lat, p.geometry); if (ed < minEdge) continue;
+      // never inside, or within minEdge of, a no-hunting parcel (guards against overlapping parcel records)
+      if (noHunt.some((h) => lon > h.bbox[0] - 0.001 && lon < h.bbox[2] + 0.001 && lat > h.bbox[1] - 0.001 && lat < h.bbox[3] + 0.001 &&
+        (pip(lon, lat, h.geometry) || edgeDist(lon, lat, h.geometry) < minEdge))) continue;
       const kx = 111320 * Math.cos((lat * Math.PI) / 180);
       if (addrCells.some(([ax, ay]) => Math.hypot((ax - lon) * kx, (ay - lat) * 110540) < safety)) continue;
       const c = cellAt(X, Y); if (!c || Number.isNaN(c.t.elev[c.i])) continue;
@@ -532,27 +535,34 @@ function scoreCand(k, wind, thermal, detail) {
   return { score, reasons, warn, face: card((face * 360) / NA), approach: card(down), trans, sightS, scentS };
 }
 
+const baseName = (n) => String(n).split(' (')[0].split(' – ')[0];
 function planScore(m) {
   if (!plan) throw new Error('not prepared');
-  const { wind, thermal = 0.6, top = 5, minSep = 120 } = m;
-  const scores = plan.cands.map((k) => scoreCand(k, wind, thermal, false));
-  let max = -Infinity, min = Infinity; scores.forEach((s) => { if (s > max) max = s; if (s < min) min = s; });
-  const order = scores.map((s, i) => [s, i]).sort((a, b) => b[0] - a[0]);
-  const picks = [];
+  const { wind, thermal = 0.6, only = null, perParcel = 0, top = 5, minSep = 120 } = m;
+  const want = only && only.length ? new Set(only) : null;
+  const scores = plan.cands.map((k) => (want && !want.has(baseName(plan.parcels[k.pi].name)) ? -Infinity : scoreCand(k, wind, thermal, false)));
+  const live = scores.filter((s) => s > -Infinity);
+  let max = -Infinity, min = Infinity; live.forEach((s) => { if (s > max) max = s; if (s < min) min = s; });
+  const order = scores.map((s, i) => [s, i]).filter(([s]) => s > -Infinity).sort((a, b) => b[0] - a[0]);
+  const picks = [], perCount = {};
+  const sep = perParcel ? 80 : minSep;
   for (const [s, i] of order) {
-    if (picks.length >= top || s < 0.15) break;
-    const k = plan.cands[i];
-    if (picks.some((p) => Math.hypot((p.k.X - k.X) * plan.cellM, (p.k.Y - k.Y) * plan.cellM) < minSep)) continue;
-    picks.push({ k, s });
+    const k = plan.cands[i], name = baseName(plan.parcels[k.pi].name);
+    if (perParcel ? (perCount[name] || 0) >= perParcel : picks.length >= top) continue;
+    if (!perParcel && s < 0.15) break;
+    if (picks.some((p) => Math.hypot((p.k.X - k.X) * plan.cellM, (p.k.Y - k.Y) * plan.cellM) < sep)) continue;
+    picks.push({ k, s }); perCount[name] = (perCount[name] || 0) + 1;
+    if (perParcel && want && [...want].every((n) => (perCount[n] || 0) >= perParcel)) break;
   }
+  // Ratings are absolute (same scale everywhere) so a weaker preserve honestly shows fewer stars
   const spots = picks.map(({ k }) => {
     const d = scoreCand(k, wind, thermal, true), p = plan.parcels[k.pi];
-    return { lat: k.lat, lon: k.lon, elev: k.elev, parcel: p.name, status: p.status, rating: Math.max(1, Math.min(5, Math.round(d.score * 7))), ...d };
+    return { lat: k.lat, lon: k.lon, elev: k.elev, parcel: p.name, group: baseName(p.name), status: p.status, rating: Math.max(1, Math.min(5, Math.round(d.score * 9))), ...d };
   });
-  // heat map cells (score normalised to the best spot)
+  if (perParcel) spots.sort((a, b) => (a.group < b.group ? -1 : a.group > b.group ? 1 : b.score - a.score));
   const span = Math.max(1e-6, max - Math.max(0, min));
-  const heat = new Float32Array(plan.cands.length * 3);
-  plan.cands.forEach((k, i) => { heat[i * 3] = k.X; heat[i * 3 + 1] = k.Y; heat[i * 3 + 2] = Math.max(0, (scores[i] - Math.max(0, min)) / span); });
+  const heat = new Float32Array(live.length * 3); let j = 0;
+  plan.cands.forEach((k, i) => { if (scores[i] === -Infinity) return; heat[j * 3] = k.X; heat[j * 3 + 1] = k.Y; heat[j * 3 + 2] = Math.max(0, (scores[i] - Math.max(0, min)) / span); j++; });
   return { spots, heat };
 }
 

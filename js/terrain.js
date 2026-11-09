@@ -15,8 +15,8 @@ const ask = (msg, transfer, onProgress) => new Promise((resolve, reject) => {
 });
 
 /** Morning blind planner: prepare the terrain/forest raster for the huntable parcels, then score for a wind. */
-export const planPrep = (parcels, addresses, onProgress) => ask({ kind: 'planPrep', parcels, addresses }, [], onProgress);
-export const planScore = (wind, thermal) => ask({ kind: 'planScore', wind, thermal });
+export const planPrep = (parcels, addresses, onProgress, noHunt = []) => ask({ kind: 'planPrep', parcels, addresses, noHunt }, [], onProgress);
+export const planScore = (wind, thermal, only, perParcel) => ask({ kind: 'planScore', wind, thermal, only, perParcel });
 
 export const pointInfo = (lat, lon) => ask({ kind: 'point', lat, lon }).catch(() => ({}));
 
