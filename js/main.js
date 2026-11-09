@@ -925,31 +925,60 @@ $('btnInstall').onclick = async () => {
 if (!isStandalone && /iphone|ipad|ipod/i.test(navigator.userAgent)) { $('iosInstall').style.display = ''; $('installBox').style.display = ''; $('btnInstall').style.display = 'none'; }
 const netBanner = () => $('offlineBanner').style.display = navigator.onLine ? 'none' : '';
 window.addEventListener('online', netBanner); window.addEventListener('offline', netBanner); netBanner();
-// ---- updates: check on launch and whenever the app comes back to the foreground; reload into new versions
-const APP_VERSION = 'v5';
+// ---- updates. Two layers so a phone can never get stuck on an old version:
+// 1) normal service-worker update (checked on launch and every time the app returns to the foreground)
+// 2) safety net: version.json is fetched straight from the server (never cached); if it's newer than this
+//    page, the app clears only its own app-file cache and reloads. Maps, waypoints and tracks are kept.
+const APP_VERSION = 'v6';
 $('appVersion').textContent = `Version ${APP_VERSION.slice(1)} · data ${D.built}`;
+let reloading = false;
+const busy = () => !!(editing || recording || document.querySelector('#sheetOffline.open') || packAbort);
+function reloadOnce(force = false) {
+  if (reloading) return;
+  let last = 0; try { last = +sessionStorage.getItem('huntmap.reloadAt') || 0; } catch { /* private mode */ }
+  if (!force && Date.now() - last < 20000) return; // loop guard
+  try { sessionStorage.setItem('huntmap.reloadAt', String(Date.now())); } catch { /* private mode */ }
+  if (!force && busy()) {
+    if (document.querySelector('.update-bar')) return;
+    const bar = document.createElement('div'); bar.className = 'update-bar';
+    bar.innerHTML = '✨ Update ready <span class="grow"></span><button class="btn small">Reload</button>';
+    bar.querySelector('button').onclick = () => location.reload(); document.body.appendChild(bar);
+    return;
+  }
+  reloading = true; location.reload();
+}
+async function hardRefresh() {
+  // drop app-file caches + service worker, keep map tiles (hunt-tiles) and IndexedDB data
+  try { for (const k of await caches.keys()) if (k.startsWith('hunt-shell-') || k.startsWith('workbox-precache')) await caches.delete(k); } catch { /* ignore */ }
+  try { for (const r of await navigator.serviceWorker.getRegistrations()) await r.unregister(); } catch { /* ignore */ }
+  reloadOnce(true);
+}
+let swReg = null;
+async function checkForUpdate(manual = false) {
+  if (!navigator.onLine) { if (manual) toast('No signal: connect to check for updates'); return; }
+  swReg?.update().catch(() => {});
+  try {
+    const r = await fetch(`version.json?t=${Date.now()}`, { cache: 'no-store' });
+    const { version } = await r.json();
+    if (version && version !== APP_VERSION) {
+      const forced = store.get('forcedFor', null);
+      if (forced && forced.v === version && Date.now() - forced.t < 10 * 60000) { if (manual) toast('Update is still rolling out. Try again in a few minutes.'); return; }
+      store.set('forcedFor', { v: version, t: Date.now() });
+      toast('Updating to the latest version…');
+      // give the service worker a moment to swap in normally, then force it
+      setTimeout(() => { if (!reloading && !busy()) hardRefresh(); }, 4000);
+    } else if (manual) toast(`You have the latest version (${APP_VERSION.slice(1)})`);
+  } catch { if (manual) toast("Couldn't reach the server"); }
+}
 if ('serviceWorker' in navigator) {
   const hadController = !!navigator.serviceWorker.controller;
-  let reloading = false;
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (!hadController || reloading) return; // first install: nothing to refresh
-    // guard against reload loops while a new version is still activating
-    let last = 0; try { last = +sessionStorage.getItem('huntmap.reloadAt') || 0; } catch { /* private mode */ }
-    if (Date.now() - last < 20000) return;
-    try { sessionStorage.setItem('huntmap.reloadAt', String(Date.now())); } catch { /* private mode */ }
-    reloading = true;
-    if (editing || recording || document.querySelector('#sheetOffline.open') || packAbort) {
-      const bar = document.createElement('div'); bar.className = 'update-bar';
-      bar.innerHTML = '✨ Update ready <span class="grow"></span><button class="btn small">Reload</button>';
-      bar.querySelector('button').onclick = () => location.reload(); document.body.appendChild(bar);
-    } else location.reload();
-  });
-  navigator.serviceWorker.register('./sw.js').then((reg) => {
-    const check = () => reg.update().catch(() => {});
-    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') check(); });
-    $('btnUpdate').onclick = async () => { toast('Checking for updates…'); await check(); setTimeout(() => { if (!reloading) toast('You have the latest version'); }, 2500); };
-  }).catch(() => {});
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController) reloadOnce(); });
+  navigator.serviceWorker.register('./sw.js').then((reg) => { swReg = reg; }).catch(() => {});
 }
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkForUpdate(); });
+window.addEventListener('pageshow', (e) => { if (e.persisted) checkForUpdate(); });
+setTimeout(() => checkForUpdate(), 1500);
+$('btnUpdate').onclick = () => { toast('Checking for updates…'); checkForUpdate(true); };
 $('btnWhatsNew').onclick = () => openSheet('sheetNew');
 $('newTryPlan').onclick = () => { closeSheets(); openPlan(); };
 if (store.get('seenVersion', '') !== APP_VERSION) {

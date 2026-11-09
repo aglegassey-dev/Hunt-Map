@@ -23,7 +23,7 @@ jobs:
       - name: Stage site (exclude repo-only files)
         run: |
           mkdir _site
-          cp -r index.html app.css data.js sw.js manifest.webmanifest js icons vendor _site/
+          cp -r index.html app.css data.js sw.js version.json manifest.webmanifest js icons vendor _site/
           touch _site/.nojekyll
       - uses: actions/upload-pages-artifact@v4
         with:

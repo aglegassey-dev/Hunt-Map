@@ -1,6 +1,6 @@
 // Freeport Hunt Map service worker: offline app shell + cache-first map tiles.
 // Bump VERSION when shell files change so phones pick up the update.
-const VERSION = 'v5';
+const VERSION = 'v6';
 const SHELL_CACHE = `hunt-shell-${VERSION}`;
 const TILE_CACHE = 'hunt-tiles'; // must match TILE_CACHE in js/offline.js
 const DATA_CACHE = 'hunt-data';
@@ -66,6 +66,7 @@ self.addEventListener('message', (e) => { if (e.data === 'version') e.source?.po
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
   const u = new URL(e.request.url);
+  if (u.origin === self.location.origin && u.pathname.endsWith('/version.json')) return; // always straight to the network
   if (u.origin === self.location.origin) e.respondWith(shell(e.request));
   else if (isTile(u)) e.respondWith(cacheFirst(e.request, TILE_CACHE));
   else if (isLiveData(u)) e.respondWith(networkFirst(e.request, DATA_CACHE, 5000));
