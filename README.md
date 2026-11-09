@@ -12,20 +12,27 @@ It's a static installable web app (PWA): no build step, no server, no accounts. 
   status shows the distance to the boundary and warns when GPS accuracy is larger than that distance. Also
   includes about 100-yard firearm safety circles around E911 address points, a Sunday warning and calculated
   legal shooting hours.
-- **Terrain:** 1 m LiDAR terrain base and hillshade (Maine GeoLibrary), slope-angle shading
-  (10–15°, 15–25°, 25–35°, 35°+), USGS contours with labels, USGS streams.
-- **Food / hardwoods:** Maine leaf-off aerial imagery (hardwoods look gray/brown, conifers dark green),
-  NLCD 2021 hardwood forest (30 m), USFS oak forest groups (250 m).
-- **Presets:** Terrain scout · Terrain on satellite · Food / hardwoods · Plain satellite.
+- **Base maps:** Satellite (Esri), Leaf-off aerial (Maine GeoLibrary: hardwoods gray, conifers green),
+  USGS Topo, and LiDAR terrain.
+- **Terrain computed on the phone from raw 1 m LiDAR** (Maine statewide DEM, decoded in a Web Worker):
+  - shaded relief (base map or blended over any base)
+  - contours that auto-adjust 2–50 ft by zoom, with labeled index lines
+  - slope angle (8–15°, 15–25°, 25–35°, 35°+)
+  - **terrain features:** auto-detected benches, ridges/spurs and draws/drainages
+- **Food & cover:** LANDFIRE 2024 forest types (oak, pine-oak, northern hardwoods, mixed, conifer, swamp forest,
+  marsh, fields, young growth), each toggleable, plus USFWS wetlands and USGS streams.
+- **Tap any spot:** legal status, elevation, slope, the direction it faces, terrain feature and forest type.
+  Works offline.
+- **Presets:** Terrain scout · Stand finder · Food & cover · Clean satellite. Every overlay has an opacity slider.
 - **Waypoints:** long-press or ＋ to add one (stand, blind, camera, scrape, rub, bedding, oaks, water, …)
   with notes and photos. Drag to move, and tap **Go** to navigate with live distance and bearing.
 - **Tracks:** ● records your walk.
-- **GPX/KML import and GPX export:** compatible with onX, Garmin and Gaia.
-- **Offline maps:** one tap on **Download all preserves** saves every layer for every preserve on the
-  FCT hunting map plus ~300 yd around it. *High detail* is ~11k tiles / ~360 MB; *Maximum* is ~26k
-  tiles / ~680 MB. You can pause and resume, and already-saved tiles are skipped. You can also download
-  any area on screen. When you zoom past the saved detail with no signal, the map sharpens the nearest
-  saved tile instead of going blank. Zones, waypoints and GPS work with no signal.
+- **Share with buddies:** a QR code or link to the app. Text any waypoint, a tapped spot, your current location,
+  or all your waypoints as a link. It opens in their app and offers to save. There's no server: the data is
+  inside the link. GPX/KML import and export work with onX, Garmin and Gaia.
+- **Offline maps:** one tap on **Download all preserves** saves every layer for every preserve plus ~300 yd
+  around it. You can pause and resume. When you zoom past the saved detail offline, the map sharpens the
+  nearest saved tile instead of going blank.
 - **Wind:** current conditions and hourly forecast with scent-direction arrows (Open-Meteo).
 
 Waypoints, photos and tracks are stored on the device (IndexedDB). Export a GPX as a backup.
@@ -46,12 +53,16 @@ Local test: `python3 -m http.server 8000` in this folder, then open http://local
 | --- | --- |
 | `index.html`, `app.css` | UI shell and styles |
 | `js/main.js` | App wiring: map, zones, GPS, waypoints, tracks, sheets |
-| `js/layers.js` | Base maps and terrain/forest overlays (URL functions shared with offline download) |
+| `js/layers.js` | Layer catalogue: base maps, grouped overlays, presets, user layer settings |
+| `js/terrain.js`, `js/terrain-worker.js` | On-device LiDAR terrain (relief, contours, slope, features), LANDFIRE forest rendering, point queries |
+| `js/sources.js` | Raw data tile URLs (LiDAR LERC, LANDFIRE LERC) shared by map, worker and downloader |
+| `js/evt.js` | Generated LANDFIRE code → forest category/name table |
+| `js/share.js` | Share links (waypoints packed into the URL hash), QR code, native share |
 | `js/offline.js` | Offline downloads into Cache Storage (`hunt-tiles`): preserves pack (`PACK_LEVELS` sets per-layer max zoom) and on-screen areas |
 | `js/geo.js`, `js/db.js`, `js/gpx.js`, `js/weather.js` | Geometry/sun math, IndexedDB, GPX/KML, wind |
 | `sw.js` | Service worker: offline app shell + cache-first tiles. **Bump `VERSION` when shell files change.** |
 | `data.js` | Generated zone data (do not edit by hand) |
-| `vendor/leaflet` | Leaflet 1.9.4 |
+| `vendor/` | Leaflet 1.9.4, LERC decoder 4.3.0 (Apache-2.0), qrcode-generator 1.4.4 (MIT) |
 
 ## Updating zone data
 

@@ -13,11 +13,13 @@ const saveAreas = (a) => { try { localStorage.setItem(AREAS_KEY, JSON.stringify(
 // Per-layer max zoom for the one-tap "all preserves" download. Each layer goes as deep as its source
 // is actually sharp (LiDAR is 1 m, so z17/18 at 512 px already shows every bench and gully).
 export const PACK_LEVELS = {
-  high: { label: 'High detail (recommended)', caps: { hybrid: 18, leafoff: 18, terrain: 17, slope: 17, contours: 17, streams: 16, hardwood: 15, topo: 16, oak: 13 }, labels: 17 },
-  max: { label: 'Maximum detail', caps: { hybrid: 19, leafoff: 18, terrain: 18, slope: 18, contours: 17, streams: 16, hardwood: 16, topo: 16, oak: 13 }, labels: 18 },
+  high: { label: 'High detail (recommended)', labels: 17,
+    caps: { hybrid: 18, leafoff: 18, topo: 16, terrain: 16, shade: 16, contours: 16, slope: 16, features: 16, streams: 16, wetlands: 16, forest: 14, labels: 17 } },
+  max: { label: 'Maximum detail', labels: 18,
+    caps: { hybrid: 19, leafoff: 18, topo: 16, terrain: 16, shade: 16, contours: 16, slope: 16, features: 16, streams: 16, wetlands: 16, forest: 14, labels: 18 } },
 };
-// rough average KB per tile, for the size estimate
-const KB = { hybrid: 24, leafoff: 70, terrain: 45, slope: 22, contours: 10, streams: 4, hardwood: 3, topo: 22, oak: 2, labels: 4 };
+// rough average KB per tile, for the size estimate (terrain layers share the same LiDAR elevation tiles)
+const KB = { hybrid: 24, leafoff: 70, topo: 22, terrain: 70, shade: 70, contours: 70, slope: 70, features: 70, streams: 4, wetlands: 6, forest: 12, labels: 4 };
 export const PACK_ID = 'preserves-pack';
 export const PACK_BUFFER_M = 275; // ~300 yd around each preserve
 

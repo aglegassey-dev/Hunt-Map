@@ -1,5 +1,7 @@
 import { contains, nearestEdge, distM, bearingDeg, cardinal, yd, ft, esc, sunTimes, hm, fmtDate } from './geo.js';
-import { BASES, OVERLAYS, PRESETS, setupPanes, makeLayer } from './layers.js';
+import { BASES, OVERLAYS, PRESETS, GROUPS, FOREST_CATS, FEATURE_LEGEND, settings, setupPanes, makeLayer } from './layers.js';
+import { pointInfo, contourStyle } from './terrain.js';
+import { APP_URL, waypointsLink, parseShared, shareUrl, copyText, qrSvg } from './share.js';
 import { db, uid } from './db.js';
 import { toGPX, parseGeoFile, shareOrDownload } from './gpx.js';
 import { planDownload, download, recordArea, listAreas, removeAreaRecord, clearAll, storageText, planPreserves, PACK_LEVELS, PACK_ID } from './offline.js';
@@ -48,23 +50,30 @@ map.createPane('tracks').style.zIndex = 430;
 // ---- base & overlays
 const baseLayers = Object.fromEntries(BASES.map((b) => [b.id, null]));
 const overlayLayers = Object.fromEntries(OVERLAYS.map((o) => [o.id, null]));
-let base = store.get('base', 'hybrid'); if (!(base in baseLayers)) base = 'hybrid';
-let activeOverlays = new Set(store.get('overlays', []).filter((id) => id in overlayLayers));
+const LEGACY_BASE = { esritopo: 'topo', street: 'topo' };
+let base = store.get('base', 'hybrid'); base = LEGACY_BASE[base] || base; if (!(base in baseLayers)) base = 'hybrid';
+let activeOverlays = new Set(store.get('overlays2', ['labels', 'streams']).filter((id) => id in overlayLayers));
+Object.assign(settings, store.get('layerSettings', {}));
+const opacityOf = (id) => store.get('op.' + id, OVERLAYS.find((o) => o.id === id).opacity);
 function setBase(id) {
   if (baseLayers[base]) map.removeLayer(baseLayers[base]);
   base = id; baseLayers[id] ||= makeLayer(BASES.find((b) => b.id === id)); baseLayers[id].addTo(map);
+  const dark = id === 'terrain' || id === 'topo';
+  if (contourStyle.dark !== dark) { contourStyle.dark = dark; overlayLayers.contours?.redraw(); }
   store.set('base', id); renderLayerSheet();
 }
 function setOverlay(id, on) {
-  overlayLayers[id] ||= makeLayer(OVERLAYS.find((o) => o.id === id));
+  if (!overlayLayers[id]) { overlayLayers[id] = makeLayer(OVERLAYS.find((o) => o.id === id)); overlayLayers[id].setOpacity(opacityOf(id)); }
   if (on) { activeOverlays.add(id); overlayLayers[id].addTo(map); } else { activeOverlays.delete(id); map.removeLayer(overlayLayers[id]); }
-  store.set('overlays', [...activeOverlays]); renderLayerSheet();
+  store.set('overlays2', [...activeOverlays]); renderLayerSheet();
 }
+function saveSettings(redrawId) { store.set('layerSettings', settings); overlayLayers[redrawId]?.redraw(); }
 function applyPreset(p) {
   setBase(p.base);
   OVERLAYS.forEach((o) => setOverlay(o.id, p.overlays.includes(o.id)));
-  toast(`${p.name} layers on`);
+  toast(`${p.icon} ${p.name}`);
 }
+contourStyle.dark = base === 'terrain' || base === 'topo';
 setBase(base);
 [...activeOverlays].forEach((id) => setOverlay(id, true));
 
@@ -131,36 +140,71 @@ $('built').textContent = D.built;
 
 function renderLayerSheet() {
   const el = $('layerBody'); if (!$('sheetLayers').classList.contains('open')) return;
-  const legend = (o) => o.legend && activeOverlays.has(o.id)
-    ? `<div class="legend-row">${o.legend.map(([c, t]) => `<span><i style="background:${c}"></i>${t}</span>`).join('')}</div>` : '';
+  const extra = (o) => {
+    if (!activeOverlays.has(o.id)) return '';
+    let h = `<div class="ov-extra"><label class="slider"><span>Opacity</span><input type="range" min="0.15" max="1" step="0.05" value="${opacityOf(o.id)}" data-op="${o.id}"></label>`;
+    if (o.legend) h += `<div class="legend-row">${o.legend.map(([c, t]) => `<span><i style="background:${c}"></i>${t}</span>`).join('')}</div>`;
+    if (o.id === 'contours') h += `<div class="seg small" data-set="interval">${['auto', '2', '5', '10', '20'].map((v) =>
+      `<button data-v="${v}" class="${String(settings.interval) === v ? 'sel' : ''}">${v === 'auto' ? 'Auto' : v + ' ft'}</button>`).join('')}</div>`;
+    if (o.id === 'features') h += `<div class="cats">${FEATURE_LEGEND.map(([k, c, n, d]) =>
+      `<button class="cat ${settings.features[k] ? 'on' : ''}" data-feat="${k}" title="${d}"><i style="background:${c}"></i>${n}</button>`).join('')}</div>` +
+      '<p class="muted small">Detected from 1 m LiDAR at the current zoom. Zoom 15–17 works best.</p>';
+    if (o.id === 'forest') h += `<div class="cats">${FOREST_CATS.map(([k, n, c, d]) =>
+      `<button class="cat ${settings.cats.includes(k) ? 'on' : ''}" data-cat="${k}" title="${d}"><i style="background:${c}"></i>${n}</button>`).join('')}</div>` +
+      '<p class="muted small">Tap any spot on the map to see its exact forest type. Model data at 30 m, so confirm oaks on foot.</p>';
+    return h + '</div>';
+  };
   el.innerHTML =
-    `<h3>Quick presets</h3><div class="chips">${PRESETS.map((p) => `<button class="chip" data-preset="${p.id}">${p.name}</button>`).join('')}</div>` +
-    `<h3>Base map</h3>${BASES.map((b) => `<label class="opt"><input type="radio" name="base" value="${b.id}" ${b.id === base ? 'checked' : ''}><span><b>${b.name}</b><small>${b.desc}</small></span></label>`).join('')}` +
-    `<h3>Terrain &amp; forest</h3>${OVERLAYS.map((o) => `<label class="opt"><input type="checkbox" data-ov="${o.id}" ${activeOverlays.has(o.id) ? 'checked' : ''}><span><b>${o.name}</b><small>${o.desc}</small>${legend(o)}</span></label>`).join('')}` +
-    `<h3>Hunting</h3>${HUNT_TOGGLES.map(([k, n]) => `<label class="opt"><input type="checkbox" data-hunt="${k}" ${huntOn[k] ? 'checked' : ''}><span><b>${n}</b></span></label>`).join('')}` +
-    `<label class="opt"><input type="checkbox" id="optWake" ${store.get('wake', true) ? 'checked' : ''}><span><b>Keep screen awake while following GPS</b></span></label>`;
+    `<div class="presets">${PRESETS.map((p) => `<button class="preset" data-preset="${p.id}"><span>${p.icon}</span>${p.name}</button>`).join('')}</div>` +
+    `<h3>Base map</h3><div class="bases">${BASES.map((b) => `<button class="base ${b.id === base ? 'sel' : ''}" data-base="${b.id}"><i style="background:${b.swatch}"></i><b>${b.name}</b><small>${b.desc}</small></button>`).join('')}</div>` +
+    GROUPS.map(([g, gname]) => `<h3>${gname}</h3>` + OVERLAYS.filter((o) => o.group === g).map((o) =>
+      `<div class="ov ${activeOverlays.has(o.id) ? 'on' : ''}"><label class="ov-row"><span class="grow"><b>${o.name}</b><small>${o.desc}</small></span>` +
+      `<input type="checkbox" class="switch" data-ov="${o.id}" ${activeOverlays.has(o.id) ? 'checked' : ''}></label>${extra(o)}</div>`).join('')).join('') +
+    `<h3>Hunting</h3>${HUNT_TOGGLES.map(([k, n]) => `<div class="ov"><label class="ov-row"><span class="grow"><b>${n}</b></span><input type="checkbox" class="switch" data-hunt="${k}" ${huntOn[k] ? 'checked' : ''}></label></div>`).join('')}` +
+    `<div class="ov"><label class="ov-row"><span class="grow"><b>Keep screen awake while following GPS</b></span><input type="checkbox" class="switch" id="optWake" ${store.get('wake', true) ? 'checked' : ''}></label></div>`;
 }
 $('layerBody').addEventListener('change', (e) => {
   const t = e.target;
-  if (t.name === 'base') setBase(t.value);
-  else if (t.dataset.ov) setOverlay(t.dataset.ov, t.checked);
+  if (t.dataset.ov) setOverlay(t.dataset.ov, t.checked);
   else if (t.dataset.hunt) setHunt(t.dataset.hunt, t.checked);
   else if (t.id === 'optWake') { store.set('wake', t.checked); syncWake(); }
+  else if (t.dataset.op) store.set('op.' + t.dataset.op, +t.value);
 });
-$('layerBody').addEventListener('click', (e) => { const p = e.target.closest('[data-preset]'); if (p) applyPreset(PRESETS.find((x) => x.id === p.dataset.preset)); });
+$('layerBody').addEventListener('input', (e) => { const t = e.target; if (t.dataset.op) overlayLayers[t.dataset.op]?.setOpacity(+t.value); });
+$('layerBody').addEventListener('click', (e) => {
+  const p = e.target.closest('[data-preset]'), b = e.target.closest('[data-base]'), iv = e.target.closest('[data-set=interval] [data-v]');
+  const ft2 = e.target.closest('[data-feat]'), ct = e.target.closest('[data-cat]');
+  if (p) applyPreset(PRESETS.find((x) => x.id === p.dataset.preset));
+  else if (b) setBase(b.dataset.base);
+  else if (iv) { settings.interval = iv.dataset.v; saveSettings('contours'); renderLayerSheet(); }
+  else if (ft2) { settings.features[ft2.dataset.feat] = !settings.features[ft2.dataset.feat]; saveSettings('features'); renderLayerSheet(); }
+  else if (ct) { const k = ct.dataset.cat; settings.cats = settings.cats.includes(k) ? settings.cats.filter((c) => c !== k) : [...settings.cats, k]; saveSettings('forest'); renderLayerSheet(); }
+});
 
-// ===================================================================== elevation
-const elevCache = new Map();
-async function elevation(lat, lon) {
+// ===================================================================== elevation / terrain / forest at a point
+const infoCache = new Map();
+async function spotInfo(lat, lon) {
   const k = `${lat.toFixed(5)},${lon.toFixed(5)}`;
-  if (elevCache.has(k)) return elevCache.get(k);
-  const p = new URLSearchParams({ geometry: JSON.stringify({ x: lon, y: lat, spatialReference: { wkid: 4326 } }),
-    geometryType: 'esriGeometryPoint', returnGeometry: 'false', returnCatalogItems: 'false', f: 'json' });
-  try {
-    const r = await fetch(`https://gis.maine.gov/image/rest/services/DEM/Maine_Elevation_DEM_Statewide/ImageServer/identify?${p}`);
-    const v = parseFloat((await r.json()).value);
-    const m = isFinite(v) ? v : null; elevCache.set(k, m); return m;
-  } catch { return null; }
+  if (infoCache.has(k)) return infoCache.get(k);
+  const info = await pointInfo(lat, lon);
+  if (info.elev == null && navigator.onLine) { // outside the processed tiles: ask the state server
+    try {
+      const p = new URLSearchParams({ geometry: JSON.stringify({ x: lon, y: lat, spatialReference: { wkid: 4326 } }),
+        geometryType: 'esriGeometryPoint', returnGeometry: 'false', returnCatalogItems: 'false', f: 'json' });
+      const v = parseFloat((await (await fetch(`https://gis.maine.gov/image/rest/services/DEM/Maine_Elevation_DEM_Statewide/ImageServer/identify?${p}`)).json()).value);
+      if (isFinite(v)) info.elev = v;
+    } catch { /* offline */ }
+  }
+  infoCache.set(k, info); if (infoCache.size > 300) infoCache.delete(infoCache.keys().next().value);
+  return info;
+}
+const elevation = async (lat, lon) => (await spotInfo(lat, lon)).elev ?? null;
+function terrainText(i) {
+  if (i.slope == null) return 'n/a';
+  const parts = [`${Math.round(i.slope)}° slope`];
+  if (i.aspect != null) parts.push(`faces ${cardinal(i.aspect)}`);
+  if (i.feature) parts.push(`<b>${i.feature}</b>`);
+  return parts.join(' · ');
 }
 
 // ===================================================================== status evaluation
@@ -197,11 +241,13 @@ function evaluate(lon, lat, acc) {
     rows.push(['Shoot hours', `${hm(open)} – ${hm(close)} ${legal ? '<b>(now legal)</b>' : '<b class="bad">(closed now)</b>'}`]);
   }
   rows.push(['Elevation', '<span class="elev">…</span>']);
+  rows.push(['Terrain', '<span class="terr">…</span>']);
+  rows.push(['Forest', '<span class="forest">…</span>']);
   if (acc != null) rows.push(['GPS', `±${yd(acc)}`]);
   return { status, rows, alerts };
 }
 
-let elevToken = 0, lastElevAt = { t: 0, lat: 0, lon: 0, m: null };
+let elevToken = 0, lastElevAt = { t: 0, lat: 0, lon: 0, m: {} };
 function render(res, { title, extraHtml = '', lat, lon } = {}) {
   const card = $('card');
   card.className = 'card s-' + res.status + (store.get('cardCollapsed', false) ? ' collapsed' : '');
@@ -214,9 +260,14 @@ function render(res, { title, extraHtml = '', lat, lon } = {}) {
   if (lat != null) {
     const tok = ++elevToken;
     const fresh = distM(lon, lat, lastElevAt.lon, lastElevAt.lat) < 15 && Date.now() - lastElevAt.t < 60000;
-    const setE = (m) => { if (tok === elevToken) card.querySelectorAll('.elev').forEach((e) => (e.textContent = m == null ? 'n/a' : ft(m))); };
+    const setE = (i) => {
+      if (tok !== elevToken) return;
+      card.querySelectorAll('.elev').forEach((e) => (e.textContent = i.elev == null ? 'n/a' : ft(i.elev)));
+      card.querySelectorAll('.terr').forEach((e) => (e.innerHTML = terrainText(i)));
+      card.querySelectorAll('.forest').forEach((e) => (e.textContent = i.forest ? i.forest.replace(/^(Laurentian-Acadian|Northern Appalachian-Acadian|Eastern Cool Temperate|Northern & Central|Acadian) /, '') : 'n/a'));
+    };
     if (fresh) setE(lastElevAt.m);
-    else elevation(lat, lon).then((m) => { lastElevAt = { t: Date.now(), lat, lon, m }; setE(m); });
+    else spotInfo(lat, lon).then((i) => { lastElevAt = { t: Date.now(), lat, lon, m: i }; setE(i); });
   }
   placeFab();
 }
@@ -226,7 +277,8 @@ $('cardHead').onclick = () => { store.set('cardCollapsed', !store.get('cardColla
 
 function refreshCard() {
   if (spot) return;
-  if (lastFix) render(evaluate(lastFix.lon, lastFix.lat, lastFix.acc), { lat: lastFix.lat, lon: lastFix.lon, extraHtml: navHtml() + recHtml() });
+  if (lastFix) render(evaluate(lastFix.lon, lastFix.lat, lastFix.acc), { lat: lastFix.lat, lon: lastFix.lon,
+    extraHtml: navHtml() + recHtml() + '<div class="btnrow"><button class="btn small" id="shareMe">📤 Send my location</button></div>' });
 }
 
 // ===================================================================== tap / long-press
@@ -239,8 +291,9 @@ function showSpot(latlng, headerHtml = '') {
   render(res, {
     title: 'Spot: ' + (res.status === 'outside' ? 'Outside FCT preserves' : LABEL[res.status]), lat: latlng.lat, lon: latlng.lng,
     extraHtml: fromMe + (headerHtml ? `<div class="spot-info">${headerHtml}</div>` : '') +
-      '<div class="btnrow"><button class="btn primary" id="spotAdd">＋ Waypoint here</button><button class="btn" id="spotNav">Navigate</button><button class="btn" id="spotClose">✕</button></div>',
+      '<div class="btnrow spotbtns"><button class="btn small primary" id="spotAdd">＋ Waypoint</button><button class="btn small" id="spotNav">Go</button><button class="btn small" id="spotShare">Share</button><button class="btn small x" id="spotClose" aria-label="Close">✕</button></div>',
   });
+  $('spotShare').onclick = () => shareWaypoints([{ name: 'Spot', type: 'note', lat: spot.lat, lon: spot.lon, notes: '' }], 'Check out this spot');
   $('spotAdd').onclick = () => { const s = spot; clearSpot(); newWaypoint(s.lat, s.lon); };
   $('spotNav').onclick = () => { const s = spot; clearSpot(); startNav({ lat: s.lat, lon: s.lon, name: 'Dropped spot' }); };
   $('spotClose').onclick = () => { clearSpot(); idleCard(); };
@@ -414,6 +467,7 @@ $('wpSave').onclick = async () => {
   editing = null; wpMarkers.get(w.id).dragging?.disable();
   closeSheets(); toast('Waypoint saved');
 };
+$('wpShare').onclick = () => { const e = editing; shareWaypoints([{ ...e, name: $('wpName').value || typeOf(e.type).n, notes: $('wpNotes').value }], `${typeOf(e.type).e} ${$('wpName').value}`); };
 $('wpNav').onclick = () => { const e = editing; $('wpSave').onclick().then(() => startNav({ lat: e.lat, lon: e.lon, name: $('wpName').value || 'Waypoint' })); };
 $('wpDelete').onclick = async () => {
   if (!confirm(`Delete "${editing.name}"?`)) return;
@@ -516,6 +570,13 @@ $('btnExport').onclick = () => {
   shareOrDownload(`hunt-waypoints-${new Date().toISOString().slice(0, 10)}.gpx`, toGPX(waypoints, tracks));
 };
 $('btnImport').onclick = () => $('importInput').click();
+$('btnShareAll').onclick = () => { if (!waypoints.length) return toast('No waypoints to share yet'); shareWaypoints(waypoints, `${waypoints.length} hunting spots`); };
+$('btnPaste').onclick = async () => {
+  let t = '';
+  try { t = await navigator.clipboard.readText(); } catch { /* permission */ }
+  if (!/[#&]s=/.test(t)) t = prompt('Paste the link your buddy sent you:') || '';
+  handleShared(t, true);
+};
 $('importInput').addEventListener('change', async (e) => {
   const f = e.target.files[0]; e.target.value = ''; if (!f) return;
   try {
@@ -663,7 +724,7 @@ async function refreshWind() {
   const p = lastFix || { lat: map.getCenter().lat, lon: map.getCenter().lng };
   try {
     const w = await getWind(p.lat, p.lon);
-    $('windChip').innerHTML = `${windArrow(w.dir)} ${w.card} ${Math.round(w.speed)}<small>mph</small> · ${Math.round(w.temp)}°`;
+    $('windChip').innerHTML = `${windArrow(w.dir)} ${w.card} ${Math.round(w.speed)}<small>mph</small><span class="wtemp"> · ${Math.round(w.temp)}°</span>`;
     $('windChip').style.display = '';
     $('windBody').innerHTML = `<p class="muted">Arrows point where the wind carries your scent. Wind is named by where it blows from.</p>` +
       `<div class="wind-now">${windArrow(w.dir, 40)}<div><b>${w.card} ${Math.round(w.speed)} mph</b><small>Gusts ${Math.round(w.gust)} mph · ${Math.round(w.temp)}°F</small></div></div>` +
@@ -672,6 +733,54 @@ async function refreshWind() {
 }
 $('windChip').onclick = () => openSheet('sheetWind');
 refreshWind(); setInterval(refreshWind, 15 * 60000);
+
+// ===================================================================== sharing
+async function shareWaypoints(list, title) {
+  const url = await waypointsLink(list);
+  const names = list.slice(0, 3).map((w) => `${typeOf(w.type).e} ${w.name}`).join(', ') + (list.length > 3 ? ` +${list.length - 3} more` : '');
+  const r = await shareUrl({ title: title || 'Hunt Map spots', text: `${names}: open in Freeport Hunt Map`, url });
+  if (r === 'copied') toast('Link copied. Paste it in a text to your buddy.');
+}
+document.addEventListener('click', (e) => {
+  if (e.target.closest('#shareMe') && lastFix) shareWaypoints([{ name: `My location ${hm(new Date())}`, type: 'note', lat: lastFix.lat, lon: lastFix.lon, notes: `GPS ±${yd(lastFix.acc)}` }], 'My location');
+});
+let incoming = null;
+async function handleShared(text, fromPaste = false) {
+  let list = null;
+  try { list = await parseShared(text); } catch { /* bad link */ }
+  if (!list || !list.length) { if (fromPaste) toast("That doesn't look like a Hunt Map share link"); return; }
+  incoming = list;
+  const ref = lastFix || { lat: map.getCenter().lat, lon: map.getCenter().lng };
+  $('importBody').innerHTML = list.map((w) => `<div class="li"><span class="ico">${typeOf(w.type).e}</span><span class="grow"><b>${esc(w.name)}</b>` +
+    `<small>${typeOf(w.type).n} · ${yd(distM(ref.lon, ref.lat, w.lon, w.lat))} ${cardinal(bearingDeg(ref.lon, ref.lat, w.lon, w.lat))}${w.notes ? ' · ' + esc(w.notes) : ''}</small></span></div>`).join('');
+  $('importTitle').textContent = list.length === 1 ? 'A buddy shared a spot' : `A buddy shared ${list.length} spots`;
+  $('importNav').style.display = list.length === 1 ? '' : 'none';
+  $('importSafari').style.display = !isStandalone && /iphone|ipad|ipod/i.test(navigator.userAgent) ? '' : 'none';
+  const b = L.latLngBounds(list.map((w) => [w.lat, w.lon]));
+  map.fitBounds(b.pad(0.4), { maxZoom: 16 });
+  openSheet('sheetImport');
+  history.replaceState(null, '', location.pathname + location.search);
+}
+$('importSave').onclick = async () => {
+  for (const w of incoming) {
+    const rec = { id: uid(), lat: w.lat, lon: w.lon, type: WP[w.type] ? w.type : 'note', name: w.name || 'Shared spot', notes: w.notes || '', photos: [], created: Date.now(), elev: null };
+    await db.put('waypoints', rec); waypoints.unshift(rec); drawWaypoint(rec);
+  }
+  toast(`Saved ${incoming.length} waypoint${incoming.length > 1 ? 's' : ''}`); closeSheets();
+};
+$('importNav').onclick = () => { const w = incoming[0]; startNav({ lat: w.lat, lon: w.lon, name: w.name }); };
+$('importCopy').onclick = async () => { await copyText(await waypointsLink(incoming)); toast('Copied. In the Hunt Map app: My spots → Paste link.'); };
+window.addEventListener('hashchange', () => handleShared(location.hash));
+
+// share the app itself
+function renderShareApp() {
+  $('shareQr').innerHTML = qrSvg(APP_URL);
+  $('shareUrl').textContent = APP_URL.replace(/^https:\/\//, '');
+}
+$('btnShareApp').onclick = () => { renderShareApp(); openSheet('sheetShare'); };
+$('shareNative').onclick = async () => { if ((await shareUrl({ title: 'Freeport Hunt Map', text: 'Hunting map for Freeport: legal zones, LiDAR terrain, waypoints, offline GPS', url: APP_URL })) === 'copied') toast('Link copied'); };
+$('shareCopy').onclick = async () => { await copyText(APP_URL); toast('Link copied'); };
+$('shareSpots').onclick = () => { if (!waypoints.length) return toast('No waypoints yet'); shareWaypoints(waypoints, `${waypoints.length} hunting spots`); };
 
 // ===================================================================== install / offline / SW
 let deferredInstall = null;
@@ -690,6 +799,7 @@ if (!store.get('seenInfo2', false)) { openSheet('sheetInfo'); store.set('seenInf
 
 // ===================================================================== go
 updLabels(); idleCard();
-loadWaypoints().catch((e) => toast('Could not load waypoints: ' + e.message));
+loadWaypoints().then(() => { if (/[#&]s=/.test(location.hash)) handleShared(location.hash); })
+  .catch((e) => toast('Could not load waypoints: ' + e.message));
 loadTracks().catch(() => {});
 window.__hunt = { map, evaluate };

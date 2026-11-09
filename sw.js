@@ -1,19 +1,20 @@
 // Freeport Hunt Map service worker: offline app shell + cache-first map tiles.
 // Bump VERSION when shell files change so phones pick up the update.
-const VERSION = 'v2';
+const VERSION = 'v3';
 const SHELL_CACHE = `hunt-shell-${VERSION}`;
 const TILE_CACHE = 'hunt-tiles'; // must match TILE_CACHE in js/offline.js
 const DATA_CACHE = 'hunt-data';
 const SHELL = [
   './', './index.html', './app.css', './data.js', './manifest.webmanifest',
   './js/main.js', './js/layers.js', './js/geo.js', './js/db.js', './js/gpx.js', './js/offline.js', './js/weather.js',
+  './js/sources.js', './js/terrain.js', './js/terrain-worker.js', './js/evt.js', './js/share.js',
+  './vendor/lerc/LercDecode.es.js', './vendor/lerc/lerc-wasm.wasm', './vendor/qrcode/qrcode.js',
   './vendor/leaflet/leaflet.js', './vendor/leaflet/leaflet.css',
   './vendor/leaflet/images/marker-icon.png', './vendor/leaflet/images/marker-icon-2x.png', './vendor/leaflet/images/marker-shadow.png',
   './vendor/leaflet/images/layers.png', './vendor/leaflet/images/layers-2x.png',
   './icons/icon-192.png', './icons/icon-512.png', './icons/maskable-512.png', './icons/apple-touch-icon.png',
 ];
-const TILE_HOSTS = ['server.arcgisonline.com', 'basemap.nationalmap.gov', 'carto.nationalmap.gov', 'tile.openstreetmap.org',
-  'www.mrlc.gov', 'imagery.geoplatform.gov'];
+const TILE_HOSTS = ['server.arcgisonline.com', 'basemap.nationalmap.gov', 'fwspublicservices.wim.usgs.gov'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(SHELL_CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -25,7 +26,7 @@ self.addEventListener('activate', (e) => {
     .then(() => self.clients.claim()));
 });
 
-const isTile = (u) => TILE_HOSTS.includes(u.hostname) || (u.hostname === 'gis.maine.gov' && u.pathname.endsWith('/exportImage'));
+const isTile = (u) => TILE_HOSTS.includes(u.hostname) || u.pathname.endsWith('/exportImage') || u.pathname.endsWith('/export');
 const isLiveData = (u) => u.hostname === 'api.open-meteo.com' || (u.hostname === 'gis.maine.gov' && u.pathname.endsWith('/identify'));
 
 async function cacheFirst(req, cacheName) {
